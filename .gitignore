@@ -76,3 +76,12 @@ desktop-commander.log
 # Performance benchmarks
 benchmarks/results/
 performance-results.json
+
+voice-test-dir/
+test-workspace/
+high-level-research.md
+multi-command-chaining-architecture.md
+project-roadmap.md
+archive/
+CLAUDE.md
+docs/
