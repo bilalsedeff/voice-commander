@@ -2,6 +2,9 @@
 dist/
 build/
 .next/
+**/dist/
+**/build/
+**/.next/
 *.js
 *.js.map
 *.d.ts
