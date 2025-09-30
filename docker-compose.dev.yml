@@ -1,0 +1,161 @@
+# Voice MCP Gateway - Development Environment
+# Complete development stack with all services
+
+services:
+  # Main Voice MCP Gateway service
+  voice-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: voice-mcp-gateway-dev
+    ports:
+      - "8710:8710"  # HTTP API
+      - "8711:8711"  # WebSocket
+    environment:
+      - NODE_ENV=development
+      - PORT=8710
+      - WEBSOCKET_PORT=8711
+      - MCP_TRANSPORT=websocket
+      - VOICE_STT_ENGINE=whisper
+      - VOICE_TTS_ENGINE=openai
+      - VOICE_VAD_THRESHOLD=0.5
+      - VOICE_MIN_SPEECH_DURATION=250
+      - DATABASE_URL=postgresql://voice_user:voice_pass@postgres:5432/voice_mcp
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=debug
+      - ENABLE_CORS=true
+      - ENABLE_DEBUGGING=true
+      - DESKTOP_COMMANDER_ENABLED=true
+      - DESKTOP_COMMANDER_COMMAND=npx
+      - DESKTOP_COMMANDER_ARGS=-y,@wonderwhy-er/desktop-commander
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./tests:/app/tests
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - voice-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8710/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # PostgreSQL database for session and user data
+  postgres:
+    image: postgres:15-alpine
+    container_name: voice-mcp-postgres-dev
+    environment:
+      POSTGRES_DB: voice_mcp
+      POSTGRES_USER: voice_user
+      POSTGRES_PASSWORD: voice_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - voice-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voice_user -d voice_mcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for session caching and real-time data
+  redis:
+    image: redis:7-alpine
+    container_name: voice-mcp-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - voice-mcp-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # PostgreSQL Admin Interface (optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: voice-mcp-pgadmin-dev
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@voicemcp.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - voice-mcp-network
+    restart: unless-stopped
+    profiles:
+      - admin  # Use --profile admin to include this service
+
+  # Redis Commander (optional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: voice-mcp-redis-commander-dev
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - voice-mcp-network
+    restart: unless-stopped
+    profiles:
+      - admin  # Use --profile admin to include this service
+
+  # Log aggregation with ELK stack (optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: voice-mcp-elasticsearch-dev
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    networks:
+      - voice-mcp-network
+    restart: unless-stopped
+    profiles:
+      - logging  # Use --profile logging to include ELK stack
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+
+networks:
+  voice-mcp-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

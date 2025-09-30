@@ -1,0 +1,59 @@
+tests/performance/run-performance-tests.ts(17,38): error TS2307: Cannot find module '@tests/performance/performance-benchmark' or its corresponding type declarations.
+tests/voice/functional-test.ts(26,49): error TS2307: Cannot find module './parameter-extraction' or its corresponding type declarations.
+tests/voice/functional-test.ts(58,51): error TS2307: Cannot find module './confirmation-workflows' or its corresponding type declarations.
+tests/voice/functional-test.ts(92,45): error TS2307: Cannot find module './context-preservation' or its corresponding type declarations.
+tests/voice/functional-test.ts(141,50): error TS2307: Cannot find module './session-state-management' or its corresponding type declarations.
+tests/voice/functional-test.ts(165,52): error TS2307: Cannot find module './long-operation-feedback' or its corresponding type declarations.
+tests/voice/functional-test.ts(215,45): error TS2307: Cannot find module './audio-processor' or its corresponding type declarations.
+tests/voice/performance-standalone.ts(72,7): error TS2353: Object literal may only specify known properties, and 'data' does not exist in type 'VoiceCommandResult'.
+tests/voice/performance-standalone.ts(80,5): error TS2353: Object literal may only specify known properties, and 'data' does not exist in type 'VoiceCommandResult'.
+tests/voice/security-validation.cjs(121,29): error TS7006: Parameter 'input' implicitly has an 'any' type.
+tests/voice/security-validation.cjs(142,32): error TS7006: Parameter 'input' implicitly has an 'any' type.
+tests/voice/security-validation.cjs(189,37): error TS7006: Parameter 'command' implicitly has an 'any' type.
+tests/voice/security-validation.cjs(204,27): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ user: string[]; developer: string[]; admin: string[]; root: string[]; }'.
+  No index signature with a parameter of type 'string' was found on type '{ user: string[]; developer: string[]; admin: string[]; root: string[]; }'.
+tests/voice/security-validation.cjs(228,25): error TS7006: Parameter 'sessionId' implicitly has an 'any' type.
+tests/voice/security-validation.cjs(267,5): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(279,7): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(283,88): error TS18048: 'maliciousInput' is possibly 'undefined'.
+tests/voice/security-validation.cjs(303,9): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(304,38): error TS18048: 'maliciousInput' is possibly 'undefined'.
+tests/voice/security-validation.cjs(304,72): error TS18048: 'maliciousInput' is possibly 'undefined'.
+tests/voice/security-validation.cjs(307,9): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(308,38): error TS2345: Argument of type '{ category: string; input: string | undefined; sanitized: any; detected: boolean; permitted: boolean; }' is not assignable to parameter of type 'never'.
+tests/voice/security-validation.cjs(315,44): error TS18048: 'maliciousInput' is possibly 'undefined'.
+tests/voice/security-validation.cjs(315,78): error TS18048: 'maliciousInput' is possibly 'undefined'.
+tests/voice/security-validation.cjs(319,28): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(319,66): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(320,75): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(320,114): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+tests/voice/security-validation.cjs(331,11): error TS2339: Property 'sessionSecurity' does not exist on type '{ totalTests: number; passed: number; failed: number; byCategory: {}; vulnerabilities: never[]; securityScore: number; }'.
+tests/voice/security-validation.cjs(335,11): error TS2339: Property 'authSecurity' does not exist on type '{ totalTests: number; passed: number; failed: number; byCategory: {}; vulnerabilities: never[]; securityScore: number; }'.
+tests/voice/security-validation.cjs(339,11): error TS2339: Property 'auditSecurity' does not exist on type '{ totalTests: number; passed: number; failed: number; byCategory: {}; vulnerabilities: never[]; securityScore: number; }'.
+tests/voice/security-validation.cjs(374,45): error TS2339: Property 'category' does not exist on type 'never'.
+tests/voice/security-validation.cjs(374,63): error TS2339: Property 'input' does not exist on type 'never'.
+tests/voice/security-validation.cjs(374,93): error TS2339: Property 'input' does not exist on type 'never'.
+tests/voice/technical-accuracy-validation.cjs(84,30): error TS7006: Parameter 'input' implicitly has an 'any' type.
+tests/voice/technical-accuracy-validation.cjs(98,39): error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ programming: number; files: number; commands: number; tools: number; config: number; architecture: number; }'.
+  No index signature with a parameter of type 'string' was found on type '{ programming: number; files: number; commands: number; tools: number; config: number; architecture: number; }'.
+tests/voice/technical-accuracy-validation.cjs(187,5): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(193,9): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(193,9): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  Type 'undefined' is not assignable to type 'number'.
+tests/voice/technical-accuracy-validation.cjs(193,24): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(195,9): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(196,11): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(196,11): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(197,11): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(197,11): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(198,11): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(198,11): error TS2532: Object is possibly 'undefined'.
+tests/voice/technical-accuracy-validation.cjs(204,10): error TS2532: Object is possibly 'undefined'.
