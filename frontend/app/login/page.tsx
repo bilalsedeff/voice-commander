@@ -2,9 +2,12 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Mic, Eye, EyeOff } from 'lucide-react';
+import { auth } from '@/lib/api';
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -16,16 +19,18 @@ export default function LoginPage() {
     setError('');
     setIsLoading(true);
 
-    // Mock login - replace with actual API call
-    setTimeout(() => {
-      if (email && password) {
-        // Simulate successful login
-        window.location.href = '/dashboard';
-      } else {
-        setError('Please enter both email and password');
-        setIsLoading(false);
-      }
-    }, 1000);
+    try {
+      // Call real backend API
+      await auth.login(email, password);
+
+      // Redirect to dashboard on success
+      router.push('/dashboard');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Login failed';
+      setError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -134,6 +139,7 @@ export default function LoginPage() {
           <div className="grid grid-cols-2 gap-3">
             <button
               type="button"
+              onClick={() => window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/auth/google`}
               className="flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -146,6 +152,7 @@ export default function LoginPage() {
             </button>
             <button
               type="button"
+              onClick={() => window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/auth/github`}
               className="flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">

@@ -2,6 +2,7 @@
 
 import { Calendar, MessageSquare, FileText, Github, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { useState } from 'react';
+import { oauth } from '@/lib/api';
 
 interface ServiceCardProps {
   service: {
@@ -23,24 +24,40 @@ const iconMap = {
   github: Github,
 };
 
+// Map frontend service IDs to backend provider names
+const serviceToProviderMap: Record<string, string> = {
+  'google_calendar': 'google',
+  'slack': 'slack',
+  'notion': 'notion',
+  'github': 'github',
+};
+
 export default function ServiceCard({ service, onConnect, onDisconnect }: ServiceCardProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const Icon = iconMap[service.icon];
 
   const handleConnect = async () => {
     setIsLoading(true);
+    setError(null);
+
     try {
-      // TODO: Replace with actual OAuth flow
-      // For now, simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const provider = serviceToProviderMap[service.id] || service.id;
 
       if (service.connected) {
+        // Disconnect service
+        await oauth.disconnect(provider);
         onDisconnect?.(service.id);
       } else {
-        // Redirect to OAuth flow
-        // window.location.href = `/auth/${service.id}?userId=current-user-id`;
-        onConnect?.(service.id);
+        // Connect service - redirect to OAuth flow
+        await oauth.connect(provider);
+        // Note: User will be redirected to OAuth provider, then back to dashboard
+        // onConnect will be called after successful OAuth callback
       }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Operation failed';
+      setError(errorMessage);
+      console.error('Service connection error:', err);
     } finally {
       setIsLoading(false);
     }
@@ -80,6 +97,13 @@ export default function ServiceCard({ service, onConnect, onDisconnect }: Servic
             {service.connected ? 'Connected' : 'Not connected'}
           </span>
         </div>
+
+        {/* Error Message */}
+        {error && (
+          <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
 
         {/* Connect/Disconnect Button */}
         <button

@@ -1,12 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Mic, Settings, ArrowLeft, Info } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { Mic, Settings, ArrowLeft, Info, CheckCircle, XCircle, User, LogOut, ChevronDown } from 'lucide-react';
 import VoiceInterface from '@/components/VoiceInterface';
 import ServiceCard from '@/components/ServiceCard';
+import { auth, oauth } from '@/lib/api';
+
+// Map backend provider names to frontend service IDs
+const providerToServiceMap: Record<string, string> = {
+  'google': 'google_calendar',
+  'slack': 'slack',
+  'notion': 'notion',
+  'github': 'github',
+};
 
 export default function DashboardPage() {
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<'voice' | 'services'>('voice');
   const [services, setServices] = useState([
     {
@@ -44,6 +55,84 @@ export default function DashboardPage() {
   ]);
 
   const [commandHistory, setCommandHistory] = useState<Array<{ command: string; result: any }>>([]);
+  const [oauthNotification, setOauthNotification] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [userEmail, setUserEmail] = useState<string>('');
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+
+  // Check authentication and fetch OAuth connections on mount
+  useEffect(() => {
+    const initializeDashboard = async () => {
+      // Check if user is authenticated
+      if (!auth.isAuthenticated()) {
+        window.location.href = '/login';
+        return;
+      }
+
+      try {
+        // Fetch user info
+        const user = await auth.getCurrentUser();
+        setUserEmail(user.email);
+
+        // Fetch OAuth connections
+        const connections = await oauth.getConnections();
+
+        // Update services with connection status
+        setServices(prev => prev.map(service => {
+          const provider = service.id === 'google_calendar' ? 'google' : service.id;
+          const connection = connections.find(c => c.provider === provider);
+          return {
+            ...service,
+            connected: connection?.connected || false,
+          };
+        }));
+      } catch (error) {
+        console.error('Failed to initialize dashboard:', error);
+        // If error is 401/403, user will be redirected to login by API client
+      }
+    };
+
+    initializeDashboard();
+  }, []);
+
+  // Handle OAuth callback
+  useEffect(() => {
+    const success = searchParams.get('success');
+    const error = searchParams.get('error');
+    const provider = searchParams.get('provider');
+
+    if (success === 'true' && provider) {
+      // OAuth connection successful
+      const serviceId = providerToServiceMap[provider] || provider;
+
+      setServices(prev => prev.map(s =>
+        s.id === serviceId ? { ...s, connected: true } : s
+      ));
+
+      setOauthNotification({
+        type: 'success',
+        message: `Successfully connected ${provider}!`,
+      });
+
+      // Clear notification after 5 seconds
+      setTimeout(() => setOauthNotification(null), 5000);
+
+      // Clear URL parameters
+      window.history.replaceState({}, '', '/dashboard');
+    } else if (error) {
+      setOauthNotification({
+        type: 'error',
+        message: `OAuth connection failed: ${error}`,
+      });
+
+      setTimeout(() => setOauthNotification(null), 5000);
+
+      // Clear URL parameters
+      window.history.replaceState({}, '', '/dashboard');
+    }
+  }, [searchParams]);
 
   const handleServiceConnect = (serviceId: string) => {
     setServices(prev =>
@@ -63,6 +152,16 @@ export default function DashboardPage() {
 
   const handleCommandExecuted = (command: string, result: any) => {
     setCommandHistory(prev => [{ command, result }, ...prev].slice(0, 10)); // Keep last 10
+  };
+
+  const handleLogout = async () => {
+    try {
+      await auth.logout();
+    } catch (error) {
+      console.error('Logout failed:', error);
+      // Force logout even if API call fails
+      window.location.href = '/login';
+    }
   };
 
   const connectedCount = services.filter(s => s.connected).length;
@@ -89,6 +188,45 @@ export default function DashboardPage() {
             <div className="text-sm text-gray-600">
               <span className="font-semibold">{connectedCount}</span>
               <span> / {services.length} services connected</span>
+            </div>
+
+            {/* User Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowUserDropdown(!showUserDropdown)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center">
+                  <User className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm font-medium text-gray-700">{userEmail || 'Loading...'}</span>
+                <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${showUserDropdown ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showUserDropdown && (
+                <>
+                  {/* Backdrop to close dropdown */}
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setShowUserDropdown(false)}
+                  />
+
+                  {/* Dropdown Menu */}
+                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-20">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <p className="text-sm font-medium text-gray-900">Signed in as</p>
+                      <p className="text-sm text-gray-600 truncate">{userEmail}</p>
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -141,8 +279,36 @@ export default function DashboardPage() {
 
       {/* Content */}
       <div className="container mx-auto px-4 py-8">
+        {/* OAuth Notification */}
+        {oauthNotification && (
+          <div
+            className={`mb-8 border rounded-lg p-4 ${
+              oauthNotification.type === 'success'
+                ? 'bg-green-50 border-green-200'
+                : 'bg-red-50 border-red-200'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              {oauthNotification.type === 'success' ? (
+                <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+              ) : (
+                <XCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+              )}
+              <div>
+                <p
+                  className={`font-medium ${
+                    oauthNotification.type === 'success' ? 'text-green-900' : 'text-red-900'
+                  }`}
+                >
+                  {oauthNotification.message}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Info Banner */}
-        {connectedCount === 0 && (
+        {connectedCount === 0 && !oauthNotification && (
           <div className="mb-8 bg-blue-50 border border-blue-200 rounded-lg p-4">
             <div className="flex items-start gap-3">
               <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />

@@ -1,0 +1,107 @@
+// Voice Commander Database Schema
+// PostgreSQL schema for web-based voice orchestration platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String   // bcrypt hashed
+  name      String?  // nullable for social auth users
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  oauthTokens    OAuthToken[]
+  voiceCommands  VoiceCommand[]
+  sessions       Session[]
+
+  @@map("users")
+}
+
+// OAuth tokens for third-party service integrations
+model OAuthToken {
+  id            String   @id @default(uuid())
+  userId        String
+  provider      String   // "google", "slack", "notion", "github"
+  accessToken   String   // AES-256 encrypted
+  refreshToken  String?  // AES-256 encrypted
+  expiresAt     DateTime?
+  scope         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@index([provider])
+  @@map("oauth_tokens")
+}
+
+// Voice command history
+model VoiceCommand {
+  id            String   @id @default(uuid())
+  userId        String
+  sessionId     String
+  transcript    String
+  mcpTool       String?
+  mcpParams     Json?
+  mcpResult     Json?
+  confidence    Float
+  riskLevel     String   // "low", "medium", "high"
+  success       Boolean
+  latency       Int      // milliseconds
+  error         String?
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([createdAt])
+  @@map("voice_commands")
+}
+
+// User sessions for JWT token management
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  token        String   // JWT token hash (not unique - users can have multiple sessions)
+  refreshToken String   @unique
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  lastActivity DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// Service connection status (denormalized for performance)
+model ServiceConnection {
+  id          String   @id @default(uuid())
+  userId      String
+  provider    String   // "google", "slack", "notion", "github"
+  connected   Boolean  @default(false)
+  lastSync    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("service_connections")
+}

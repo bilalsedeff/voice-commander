@@ -39,7 +39,8 @@
       "Bash(find:*)",
       "Bash(dir:*)",
       "Bash(npm run mcp:desktop-commander:*)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "Bash(docker-compose up:*)"
     ],
     "deny": [],
     "ask": []

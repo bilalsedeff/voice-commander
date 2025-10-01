@@ -89,7 +89,7 @@ project-roadmap.md
 archive/
 CLAUDE.md
 docs/
-voice-commander-web-mvp.md
+#voice-commander-web-mvp.md
 
 # Package lock files (if using yarn, npm, or pnpm, only one lock file should be present)
 package-lock.json
@@ -97,3 +97,6 @@ yarn.lock
 pnpm-lock.yaml
 **/node_modules/
 */package-lock.json
+
+# Windows system files
+nul
