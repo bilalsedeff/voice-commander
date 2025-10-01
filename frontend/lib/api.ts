@@ -30,6 +30,11 @@ interface OAuthConnection {
   provider: string;
   connected: boolean;
   lastSync: string | null;
+  mcpConnected: boolean;
+  mcpStatus: string;
+  mcpLastHealthCheck: string | null;
+  mcpError: string | null;
+  mcpToolsCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -218,7 +223,97 @@ export const oauth = {
   },
 };
 
+/**
+ * Voice Command API
+ */
+export const voice = {
+  /**
+   * Process a voice command
+   */
+  async processCommand(command: string): Promise<{
+    success: boolean;
+    type: 'single' | 'chained';
+    result: any;
+    message: string;
+  }> {
+    const response = await authenticatedFetch('/api/voice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ command }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Voice command failed');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Confirm a risky command
+   */
+  async confirmCommand(confirmationId: string, userResponse: string): Promise<{
+    success: boolean;
+    result: any;
+    message: string;
+  }> {
+    const response = await authenticatedFetch('/api/voice/confirm', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ confirmationId, response: userResponse }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Confirmation failed');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Get available voice capabilities
+   */
+  async getCapabilities(): Promise<{
+    success: boolean;
+    connectedServices: string[];
+    capabilities: Record<string, any>;
+  }> {
+    const response = await authenticatedFetch('/api/voice/capabilities');
+
+    if (!response.ok) {
+      throw new Error('Failed to get capabilities');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Get example voice commands
+   */
+  async getExamples(): Promise<{
+    success: boolean;
+    examples: Record<string, string[]>;
+    chainedExamples: string[];
+    connectedServices: string[];
+  }> {
+    const response = await authenticatedFetch('/api/voice/examples');
+
+    if (!response.ok) {
+      throw new Error('Failed to get examples');
+    }
+
+    return response.json();
+  },
+};
+
 export default {
   auth,
   oauth,
+  voice,
 };

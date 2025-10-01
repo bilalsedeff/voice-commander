@@ -104,7 +104,7 @@ export function authenticateToken(
  */
 export function optionalAuth(
   req: Request,
-  res: Response,
+  _res: Response,
   next: NextFunction
 ): void {
   try {

@@ -12,6 +12,10 @@ interface ServiceCardProps {
     icon: 'calendar' | 'slack' | 'notion' | 'github';
     connected: boolean;
     color: string;
+    mcpConnected?: boolean;
+    mcpStatus?: string;
+    mcpToolsCount?: number;
+    mcpError?: string | null;
   };
   onConnect?: (serviceId: string) => void;
   onDisconnect?: (serviceId: string) => void;
@@ -82,20 +86,62 @@ export default function ServiceCard({ service, onConnect, onDisconnect }: Servic
         <h3 className="text-xl font-bold text-gray-900 mb-2">{service.name}</h3>
         <p className="text-gray-600 text-sm mb-4">{service.description}</p>
 
-        {/* Connection Status */}
-        <div className="flex items-center gap-2 mb-4">
-          <div
-            className={`w-2 h-2 rounded-full ${
-              service.connected ? 'bg-green-500' : 'bg-gray-300'
-            }`}
-          ></div>
-          <span
-            className={`text-sm font-medium ${
-              service.connected ? 'text-green-600' : 'text-gray-500'
-            }`}
-          >
-            {service.connected ? 'Connected' : 'Not connected'}
-          </span>
+        {/* Dual Connection Status (OAuth + MCP) */}
+        <div className="space-y-3 mb-4">
+          {/* OAuth Status */}
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-2 h-2 rounded-full ${
+                service.connected ? 'bg-green-500' : 'bg-gray-300'
+              }`}
+            ></div>
+            <span
+              className={`text-sm font-medium ${
+                service.connected ? 'text-green-600' : 'text-gray-500'
+              }`}
+            >
+              OAuth: {service.connected ? 'Authorized' : 'Not authorized'}
+            </span>
+          </div>
+
+          {/* MCP Status */}
+          {service.connected && (
+            <div className="flex items-center gap-2">
+              <div
+                className={`w-2 h-2 rounded-full ${
+                  service.mcpConnected
+                    ? 'bg-green-500'
+                    : service.mcpStatus === 'connecting'
+                    ? 'bg-yellow-500 animate-pulse'
+                    : 'bg-gray-300'
+                }`}
+              ></div>
+              <span
+                className={`text-sm font-medium ${
+                  service.mcpConnected
+                    ? 'text-green-600'
+                    : service.mcpStatus === 'connecting'
+                    ? 'text-yellow-600'
+                    : 'text-gray-500'
+                }`}
+              >
+                MCP: {service.mcpConnected
+                  ? `Connected (${service.mcpToolsCount || 0} tools)`
+                  : service.mcpStatus === 'connecting'
+                  ? 'Connecting...'
+                  : service.mcpStatus === 'error'
+                  ? 'Connection failed'
+                  : 'Not connected'}
+              </span>
+            </div>
+          )}
+
+          {/* MCP Error Display */}
+          {service.mcpError && (
+            <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
+              ⚠️ {service.mcpError}
+            </div>
+          )}
         </div>
 
         {/* Error Message */}

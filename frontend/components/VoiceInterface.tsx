@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, Loader2, Volume2, AlertCircle } from 'lucide-react';
 import { SpeechAPI } from '@/lib/speech-api';
+import { voice } from '@/lib/api';
 
 interface VoiceInterfaceProps {
   onCommandExecuted?: (command: string, result: any) => void;
@@ -80,17 +81,17 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
           setIsListening(false);
           setIsProcessing(true);
 
-          // Execute command
+          // Execute command via backend
           try {
-            // TODO: Replace with actual backend API call
-            const result = await mockExecuteCommand(finalTranscript);
+            const apiResult = await voice.processCommand(finalTranscript);
 
-            setResponse(result.message);
-            onCommandExecuted?.(finalTranscript, result);
+            setResponse(apiResult.message);
+            onCommandExecuted?.(finalTranscript, apiResult);
 
-            // Speak response
+            // Speak response in English
             setIsSpeaking(true);
-            await speechAPI.speak(result.message, {
+            await speechAPI.speak(apiResult.message, {
+              lang: 'en-US', // Force English
               onEnd: () => setIsSpeaking(false),
               onError: () => setIsSpeaking(false),
             });
@@ -99,9 +100,10 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
             setError(errorMsg);
             setResponse(errorMsg);
 
-            // Speak error
+            // Speak error in English
             setIsSpeaking(true);
             await speechAPI.speak(`Error: ${errorMsg}`, {
+              lang: 'en-US', // Force English
               onEnd: () => setIsSpeaking(false),
               onError: () => setIsSpeaking(false),
             });
@@ -283,51 +285,11 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
   );
 }
 
-// Example commands
+// Example commands - will be loaded dynamically from backend
 const exampleCommands = [
-  "Schedule a meeting tomorrow at 3 PM with the team",
-  "Send a Slack message to John about the project update",
-  "Create a new Notion page titled 'Weekly Report'",
-  "Check my calendar for tomorrow",
-  "List all my upcoming meetings this week",
+  "Schedule a meeting tomorrow at 3 PM",
+  "Show my calendar for next week",
+  "Create an event titled Team Standup on Monday at 10am",
+  "List my upcoming meetings",
+  "Schedule a meeting with john@example.com tomorrow at 2pm about Project Review",
 ];
-
-// Mock command execution (replace with actual API call)
-async function mockExecuteCommand(command: string): Promise<{ message: string; data?: any }> {
-  // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  // Mock responses based on command keywords
-  if (command.toLowerCase().includes('schedule') || command.toLowerCase().includes('meeting')) {
-    return {
-      message: "Created a meeting for tomorrow at 3 PM. Invitations sent to all attendees.",
-      data: { service: 'google_calendar', eventId: 'mock-event-123' },
-    };
-  }
-
-  if (command.toLowerCase().includes('slack') || command.toLowerCase().includes('message')) {
-    return {
-      message: "Sent message to the team on Slack successfully.",
-      data: { service: 'slack', channelId: 'general' },
-    };
-  }
-
-  if (command.toLowerCase().includes('notion') || command.toLowerCase().includes('page')) {
-    return {
-      message: "Created a new Notion page titled 'Weekly Report'.",
-      data: { service: 'notion', pageId: 'mock-page-456' },
-    };
-  }
-
-  if (command.toLowerCase().includes('calendar') || command.toLowerCase().includes('check')) {
-    return {
-      message: "You have 3 meetings scheduled for tomorrow.",
-      data: { service: 'google_calendar', count: 3 },
-    };
-  }
-
-  // Default response
-  return {
-    message: `I heard: "${command}". Please connect your services to execute commands.`,
-  };
-}

@@ -23,6 +23,7 @@
 import { Router, Request, Response } from 'express';
 import * as oauthService from '../services/oauth.service';
 import { authenticateToken } from '../middleware/auth';
+import { mcpConnectionManagerV2 } from '../services/mcp-connection-manager-v2';
 import logger from '../utils/logger';
 import prisma from '../config/database';
 
@@ -143,6 +144,31 @@ router.get(
         userId
       });
 
+      // ⭐ Auto-connect MCP after successful OAuth
+      // Note: This runs asynchronously - don't block OAuth success
+      mcpConnectionManagerV2.connectMCPServer(userId, provider)
+        .then((result) => {
+          if (result.success) {
+            logger.info('MCP auto-connected after OAuth', {
+              userId,
+              provider
+            });
+          } else {
+            logger.warn('MCP auto-connect failed after OAuth', {
+              userId,
+              provider,
+              error: result.error
+            });
+          }
+        })
+        .catch((error) => {
+          logger.error('MCP auto-connect error', {
+            userId,
+            provider,
+            error: (error as Error).message
+          });
+        });
+
       // Redirect to frontend with success
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       res.redirect(`${frontendUrl}/dashboard?success=true&provider=${provider}`);
@@ -200,6 +226,22 @@ router.delete(
         userId: req.user.userId
       });
 
+      // ⭐ Also disconnect MCP when OAuth is disconnected
+      try {
+        await mcpConnectionManagerV2.disconnectMCPServer(req.user.userId, provider);
+        logger.info('MCP disconnected after OAuth disconnect', {
+          userId: req.user.userId,
+          provider
+        });
+      } catch (mcpError) {
+        // Don't fail OAuth disconnect if MCP disconnect fails
+        logger.warn('MCP disconnect failed', {
+          userId: req.user.userId,
+          provider,
+          error: (mcpError as Error).message
+        });
+      }
+
       res.status(200).json({
         success: true,
         message: `${provider} disconnected successfully`
@@ -246,6 +288,11 @@ router.get(
           provider: true,
           connected: true,
           lastSync: true,
+          mcpConnected: true,
+          mcpStatus: true,
+          mcpLastHealthCheck: true,
+          mcpError: true,
+          mcpToolsCount: true,
           createdAt: true,
           updatedAt: true
         }

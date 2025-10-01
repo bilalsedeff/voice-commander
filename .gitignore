@@ -100,3 +100,6 @@ pnpm-lock.yaml
 
 # Windows system files
 nul
+
+*/**/__tests__/
+*/__tests__/

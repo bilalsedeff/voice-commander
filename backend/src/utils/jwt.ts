@@ -85,14 +85,14 @@ export function generateTokens(payload: Omit<JWTPayload, 'iat' | 'exp'>): TokenP
   const accessToken = jwt.sign(payload, secret, {
     expiresIn,
     algorithm: 'HS256'
-  });
+  } as jwt.SignOptions);
 
   // Refresh token expires in 7 days (configurable)
   const refreshExpiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
   const refreshToken = jwt.sign(payload, refreshSecret, {
     expiresIn: refreshExpiresIn,
     algorithm: 'HS256'
-  });
+  } as jwt.SignOptions);
 
   // Convert expiresIn to milliseconds for frontend
   const expiresInMs = convertExpiresIn(expiresIn);

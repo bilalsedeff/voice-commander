@@ -22,6 +22,7 @@ model User {
   // Relations
   oauthTokens    OAuthToken[]
   voiceCommands  VoiceCommand[]
+  voiceSessions  VoiceSession[]
   sessions       Session[]
 
   @@map("users")
@@ -48,29 +49,70 @@ model OAuthToken {
   @@map("oauth_tokens")
 }
 
-// Voice command history
+// Voice command history with conversation context
 model VoiceCommand {
   id            String   @id @default(uuid())
   userId        String
   sessionId     String
   transcript    String
+  intent        String?  // Parsed intent from LLM
+
+  // Command execution details
   mcpTool       String?
   mcpParams     Json?
   mcpResult     Json?
+
+  // Quality metrics
   confidence    Float
-  riskLevel     String   // "low", "medium", "high"
+  riskLevel     String   // "safe", "low", "medium", "high"
   success       Boolean
   latency       Int      // milliseconds
   error         String?
+
+  // Conversation flow
+  requiresClarification  Boolean  @default(false)
+  clarificationQuestion  String?
+  parentCommandId        String?  // Reference to previous command if this is a clarification
+
   createdAt     DateTime @default(now())
 
   // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session VoiceSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([sessionId])
   @@index([createdAt])
+  @@index([parentCommandId])
   @@map("voice_commands")
+}
+
+// Voice conversation sessions
+model VoiceSession {
+  id              String   @id @default(uuid())
+  userId          String
+
+  // Session metadata
+  startedAt       DateTime @default(now())
+  lastActivity    DateTime @default(now())
+  endedAt         DateTime?
+  isActive        Boolean  @default(true)
+
+  // Short-term memory (last 10 interactions)
+  contextSummary  String?  // LLM-generated summary of conversation
+
+  // Session stats
+  commandCount    Int      @default(0)
+  successCount    Int      @default(0)
+
+  // Relations
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commands VoiceCommand[]
+
+  @@index([userId])
+  @@index([isActive])
+  @@index([lastActivity])
+  @@map("voice_sessions")
 }
 
 // User sessions for JWT token management
@@ -96,12 +138,62 @@ model ServiceConnection {
   id          String   @id @default(uuid())
   userId      String
   provider    String   // "google", "slack", "notion", "github"
+
+  // OAuth status
   connected   Boolean  @default(false)
   lastSync    DateTime?
+
+  // MCP connection status
+  mcpConnected        Boolean   @default(false)
+  mcpStatus           String    @default("disconnected") // "connecting", "connected", "disconnected", "error"
+  mcpSessionId        String?   @db.VarChar(255) // Session ID from MCP server (UUID)
+  mcpEndpoint         String?   @db.Text // MCP server URL (e.g., https://mcp.google.com/calendar)
+  mcpProtocolVersion  String?   @db.VarChar(50) // Protocol version (e.g., "2025-03-26")
+  mcpLastHealthCheck  DateTime? // Last successful health check (ping)
+  mcpError            String?
+  mcpToolsCount       Int       @default(0)
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@unique([userId, provider])
   @@index([userId])
+  @@index([mcpStatus])
   @@map("service_connections")
+}
+
+// MCP Server marketplace catalog
+model MCPServer {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  displayName     String
+  description     String
+  category        String   // "productivity", "development", "communication", "data", "ai"
+  iconUrl         String?
+
+  // Installation info
+  isOfficial      Boolean  @default(false)
+  requiresAuth    Boolean  @default(true)
+  connectionType  String   // "stdio", "http", "websocket"
+  installCommand  String?  // e.g., "npx @upstash/context7-mcp"
+  configExample   Json?    // Configuration example
+
+  // MCP metadata
+  tools           Json     // Array of tool definitions
+  version         String   @default("1.0.0")
+  author          String?
+  repository      String?  // GitHub repo URL
+  documentation   String?  // Docs URL
+
+  // Stats
+  installCount    Int      @default(0)
+  rating          Float?
+
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([category])
+  @@index([isActive])
+  @@map("mcp_servers")
 }

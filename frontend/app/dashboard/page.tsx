@@ -27,6 +27,10 @@ export default function DashboardPage() {
       icon: 'calendar' as const,
       connected: false,
       color: 'bg-blue-500',
+      mcpConnected: false,
+      mcpStatus: 'disconnected',
+      mcpToolsCount: 0,
+      mcpError: null,
     },
     {
       id: 'slack',
@@ -35,6 +39,10 @@ export default function DashboardPage() {
       icon: 'slack' as const,
       connected: false,
       color: 'bg-purple-500',
+      mcpConnected: false,
+      mcpStatus: 'disconnected',
+      mcpToolsCount: 0,
+      mcpError: null,
     },
     {
       id: 'notion',
@@ -43,6 +51,10 @@ export default function DashboardPage() {
       icon: 'notion' as const,
       connected: false,
       color: 'bg-gray-900',
+      mcpConnected: false,
+      mcpStatus: 'disconnected',
+      mcpToolsCount: 0,
+      mcpError: null,
     },
     {
       id: 'github',
@@ -51,6 +63,10 @@ export default function DashboardPage() {
       icon: 'github' as const,
       connected: false,
       color: 'bg-gray-700',
+      mcpConnected: false,
+      mcpStatus: 'disconnected',
+      mcpToolsCount: 0,
+      mcpError: null,
     },
   ]);
 
@@ -79,13 +95,17 @@ export default function DashboardPage() {
         // Fetch OAuth connections
         const connections = await oauth.getConnections();
 
-        // Update services with connection status
+        // Update services with connection status (OAuth + MCP)
         setServices(prev => prev.map(service => {
           const provider = service.id === 'google_calendar' ? 'google' : service.id;
           const connection = connections.find(c => c.provider === provider);
           return {
             ...service,
             connected: connection?.connected || false,
+            mcpConnected: connection?.mcpConnected || false,
+            mcpStatus: connection?.mcpStatus || 'disconnected',
+            mcpToolsCount: connection?.mcpToolsCount || 0,
+            mcpError: connection?.mcpError || null,
           };
         }));
       } catch (error) {
@@ -107,14 +127,40 @@ export default function DashboardPage() {
       // OAuth connection successful
       const serviceId = providerToServiceMap[provider] || provider;
 
+      // Update service to show OAuth connected and MCP connecting
       setServices(prev => prev.map(s =>
-        s.id === serviceId ? { ...s, connected: true } : s
+        s.id === serviceId ? {
+          ...s,
+          connected: true,
+          mcpStatus: 'connecting' // Backend automatically starts MCP connection
+        } : s
       ));
 
       setOauthNotification({
         type: 'success',
-        message: `Successfully connected ${provider}!`,
+        message: `Successfully connected ${provider}! MCP connection starting...`,
       });
+
+      // Refresh connection status after 2 seconds to get MCP status
+      setTimeout(async () => {
+        try {
+          const connections = await oauth.getConnections();
+          setServices(prev => prev.map(service => {
+            const providerName = service.id === 'google_calendar' ? 'google' : service.id;
+            const connection = connections.find(c => c.provider === providerName);
+            return connection ? {
+              ...service,
+              connected: connection.connected,
+              mcpConnected: connection.mcpConnected,
+              mcpStatus: connection.mcpStatus,
+              mcpToolsCount: connection.mcpToolsCount,
+              mcpError: connection.mcpError,
+            } : service;
+          }));
+        } catch (error) {
+          console.error('Failed to refresh MCP status:', error);
+        }
+      }, 2000);
 
       // Clear notification after 5 seconds
       setTimeout(() => setOauthNotification(null), 5000);

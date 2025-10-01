@@ -40,7 +40,10 @@
       "Bash(dir:*)",
       "Bash(npm run mcp:desktop-commander:*)",
       "Bash(tasklist:*)",
-      "Bash(docker-compose up:*)"
+      "Bash(docker-compose up:*)",
+      "Bash(nslookup:*)",
+      "Bash(whois:*)",
+      "Bash(npm test:*)"
     ],
     "deny": [],
     "ask": []

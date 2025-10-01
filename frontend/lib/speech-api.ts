@@ -138,6 +138,7 @@ export class SpeechAPI {
   speak(
     text: string,
     options?: {
+      lang?: string; // Language code (e.g., 'en-US', 'tr-TR')
       rate?: number; // 0.1 to 10 (default: 1)
       pitch?: number; // 0 to 2 (default: 1)
       volume?: number; // 0 to 1 (default: 1)
@@ -154,15 +155,19 @@ export class SpeechAPI {
       utterance.rate = options?.rate || 1.0;
       utterance.pitch = options?.pitch || 1.0;
       utterance.volume = options?.volume || 1.0;
+      utterance.lang = options?.lang || 'en-US'; // Set language
 
-      // Use specified voice or find a good default
+      // Use specified voice or find a good default for the language
       if (options?.voice) {
         utterance.voice = options.voice;
       } else {
         const voices = this.synthesis.getVoices();
+        const targetLang = options?.lang || 'en-US';
+
         const preferredVoice =
-          voices.find((v) => v.name.includes('Google') || v.name.includes('Natural')) ||
-          voices.find((v) => v.lang.startsWith('en')) ||
+          voices.find((v) => v.lang === targetLang && (v.name.includes('Google') || v.name.includes('Natural'))) ||
+          voices.find((v) => v.lang === targetLang) ||
+          voices.find((v) => v.lang.startsWith(targetLang.split('-')[0])) ||
           voices[0];
 
         if (preferredVoice) {

@@ -138,8 +138,9 @@ app.use('/api/oauth', oauthRoutes);
 // Service management routes (to be implemented)
 // app.use('/api/services', serviceRoutes);
 
-// Voice command routes (to be implemented)
-// app.use('/api/voice', voiceRoutes);
+// Voice command routes
+import voiceRoutes from './routes/voice';
+app.use('/api/voice', voiceRoutes);
 
 // ============================================================================
 // ERROR HANDLING

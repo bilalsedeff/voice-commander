@@ -345,6 +345,23 @@ async function storeOAuthTokens(
       provider
     });
 
+    // Auto-start MCP connection after OAuth authorization
+    try {
+      const { mcpConnectionManager } = await import('./mcp-connection-manager');
+      await mcpConnectionManager.connectMCPServer(userId, provider);
+      logger.info('MCP connection auto-started after OAuth', {
+        userId,
+        provider
+      });
+    } catch (mcpError) {
+      // Don't fail OAuth flow if MCP connection fails
+      logger.warn('MCP auto-connection failed, will retry later', {
+        userId,
+        provider,
+        error: (mcpError as Error).message
+      });
+    }
+
   } catch (error) {
     logger.error('Failed to store OAuth tokens', {
       userId,
