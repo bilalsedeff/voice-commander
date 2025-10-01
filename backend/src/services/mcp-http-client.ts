@@ -20,6 +20,7 @@
 import { EventSource } from 'eventsource';
 import fetch from 'node-fetch';
 import { v4 as uuidv4 } from 'uuid';
+import { MCPTool } from '../mcp/types';
 import logger from '../utils/logger';
 
 interface MCPInitializeParams {
@@ -43,12 +44,6 @@ interface MCPInitializeResult {
     version: string;
   };
   sessionId?: string;
-}
-
-interface MCPTool {
-  name: string;
-  description?: string;
-  inputSchema: Record<string, unknown>;
 }
 
 interface MCPToolResult {
@@ -118,8 +113,9 @@ export class MCPHttpClient {
       const response = await this.sendRequest('initialize', initParams);
 
       // Extract session ID from response header
-      if (response.headers) {
-        const sessionId = response.headers.get('Mcp-Session-Id');
+      if (response.headers && typeof (response.headers as unknown as { get?: (name: string) => string | null }).get === 'function') {
+        const headers = response.headers as unknown as { get: (name: string) => string | null };
+        const sessionId = headers.get('Mcp-Session-Id');
         if (sessionId) {
           this.sessionId = sessionId;
           logger.info('MCP session established', {
@@ -158,22 +154,23 @@ export class MCPHttpClient {
     }
 
     const sseUrl = `${this.endpoint}/mcp`;
-    const eventSourceInitDict: any = {
-      headers: {
-        'Accept': 'text/event-stream',
-        'Mcp-Session-Id': this.sessionId,
-        'Authorization': `Bearer ${this.accessToken}`
-      }
+    const sseHeaders: Record<string, string> = {
+      'Accept': 'text/event-stream',
+      'Mcp-Session-Id': this.sessionId,
+      'Authorization': `Bearer ${this.accessToken}`
     };
 
     // Add Last-Event-ID for resumability
     if (this.lastEventId) {
-      eventSourceInitDict.headers['Last-Event-ID'] = this.lastEventId;
+      sseHeaders['Last-Event-ID'] = this.lastEventId;
     }
 
-    this.sseStream = new EventSource(sseUrl, eventSourceInitDict);
+    // EventSource from 'eventsource' package uses headers property
+    this.sseStream = new EventSource(sseUrl, {
+      headers: sseHeaders
+    } as never);
 
-    this.sseStream.addEventListener('message', (event: any) => {
+    this.sseStream.addEventListener('message', (event: MessageEvent) => {
       try {
         this.lastEventId = event.lastEventId || null;
 
@@ -241,7 +238,7 @@ export class MCPHttpClient {
   private async sendRequest(
     method: string,
     params?: unknown
-  ): Promise<{ result?: unknown; headers?: any; error?: { code: number; message: string } }> {
+  ): Promise<{ result?: unknown; headers?: unknown; error?: { code: number; message: string } }> {
     const requestId = uuidv4();
 
     const jsonrpcRequest: JSONRPCRequest = {

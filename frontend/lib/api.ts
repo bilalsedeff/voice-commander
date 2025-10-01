@@ -228,12 +228,12 @@ export const oauth = {
  */
 export const voice = {
   /**
-   * Process a voice command
+   * Process a voice command (legacy non-streaming)
    */
   async processCommand(command: string): Promise<{
     success: boolean;
     type: 'single' | 'chained';
-    result: any;
+    result: unknown;
     message: string;
   }> {
     const response = await authenticatedFetch('/api/voice', {
@@ -250,6 +250,127 @@ export const voice = {
     }
 
     return response.json();
+  },
+
+  /**
+   * Stream voice command execution with real-time updates
+   */
+  async streamCommand(
+    command: string,
+    callbacks: {
+      onProgress?: (update: { step: string; message: string; timestamp: string; data?: unknown }) => void;
+      onResult?: (result: unknown) => void;
+      onError?: (error: { message: string; code?: string }) => void;
+      onDone?: () => void;
+    }
+  ): Promise<void> {
+    const token = getToken();
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const url = `${API_BASE_URL}/api/voice/llm/stream`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({ command }),
+      });
+
+      if (!response.ok) {
+        // Handle unauthorized
+        if (response.status === 401 || response.status === 403) {
+          clearTokens();
+          if (typeof window !== 'undefined') {
+            window.location.href = '/login';
+          }
+          return;
+        }
+
+        const errorData = await response.json().catch(() => ({ message: 'Request failed' }));
+        throw new Error(errorData.message || `HTTP ${response.status}`);
+      }
+
+      // Read SSE stream
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+
+      if (!reader) {
+        throw new Error('Response body is not readable');
+      }
+
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          callbacks.onDone?.();
+          break;
+        }
+
+        // Decode chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE messages
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+        let eventType = '';
+        let eventData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            eventData = line.slice(5).trim();
+          } else if (line === '' && eventType && eventData) {
+            // Complete event - process it
+            try {
+              const data = JSON.parse(eventData);
+
+              switch (eventType) {
+                case 'progress':
+                  callbacks.onProgress?.(data as { step: string; message: string; timestamp: string; data?: unknown });
+                  break;
+
+                case 'result':
+                  callbacks.onResult?.(data);
+                  break;
+
+                case 'error':
+                  callbacks.onError?.(data as { message: string; code?: string });
+                  break;
+
+                case 'done':
+                  callbacks.onDone?.();
+                  break;
+
+                default:
+                  console.warn('Unknown SSE event type:', eventType);
+              }
+            } catch (parseError) {
+              console.error('Failed to parse SSE event data:', eventData, parseError);
+            }
+
+            eventType = '';
+            eventData = '';
+          }
+        }
+      }
+    } catch (error) {
+      console.error('SSE streaming error:', error);
+      const errorObj = error instanceof Error ? error : new Error('Unknown SSE error');
+      callbacks.onError?.({
+        message: errorObj.message,
+        code: 'SSE_ERROR'
+      });
+    }
   },
 
   /**

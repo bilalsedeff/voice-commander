@@ -397,10 +397,10 @@ export class VoiceOrchestrator {
         try {
           const instance = mcpConnectionManagerV2.getMCPInstance(userId, provider);
 
-          // Get tools via duck typing
-          let tools: any[] = [];
-          if (typeof (instance as any).discoverTools === 'function') {
-            tools = await (instance as any).discoverTools();
+          // Get tools via duck typing - type varies by MCP implementation
+          let tools: unknown[] = [];
+          if (typeof (instance as unknown as { discoverTools?: () => Promise<unknown[]> }).discoverTools === 'function') {
+            tools = await (instance as unknown as { discoverTools: () => Promise<unknown[]> }).discoverTools();
           }
 
           capabilities[service] = {

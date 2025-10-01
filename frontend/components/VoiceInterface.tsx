@@ -6,7 +6,14 @@ import { SpeechAPI } from '@/lib/speech-api';
 import { voice } from '@/lib/api';
 
 interface VoiceInterfaceProps {
-  onCommandExecuted?: (command: string, result: any) => void;
+  onCommandExecuted?: (command: string, result: unknown) => void;
+}
+
+interface ProgressUpdate {
+  step: string;
+  message: string;
+  timestamp: string;
+  data?: unknown;
 }
 
 export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProps) {
@@ -19,6 +26,10 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
   const [response, setResponse] = useState('');
   const [error, setError] = useState('');
   const [isSupported, setIsSupported] = useState(true);
+
+  // SSE Progress tracking
+  const [progressUpdates, setProgressUpdates] = useState<ProgressUpdate[]>([]);
+  const [currentStep, setCurrentStep] = useState<string>('');
 
   // Voice wave visualization
   const [audioLevel, setAudioLevel] = useState(0);
@@ -80,35 +91,91 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
           setInterimTranscript('');
           setIsListening(false);
           setIsProcessing(true);
+          setProgressUpdates([]); // Clear previous progress
+          setCurrentStep('Starting...');
 
-          // Execute command via backend
+          // Execute command via SSE streaming backend
           try {
-            const apiResult = await voice.processCommand(finalTranscript);
+            let finalResult: unknown = null;
+            let finalMessage = '';
 
-            setResponse(apiResult.message);
-            onCommandExecuted?.(finalTranscript, apiResult);
+            await voice.streamCommand(finalTranscript, {
+              onProgress: (update) => {
+                console.log('📊 Progress:', update);
+                setProgressUpdates(prev => [...prev, update]);
+                setCurrentStep(update.message);
+              },
 
-            // Speak response in English
-            setIsSpeaking(true);
-            await speechAPI.speak(apiResult.message, {
-              lang: 'en-US', // Force English
-              onEnd: () => setIsSpeaking(false),
-              onError: () => setIsSpeaking(false),
+              onResult: (result) => {
+                console.log('✅ Result:', result);
+                finalResult = result;
+
+                // Extract message from result
+                if (result && typeof result === 'object' && 'message' in result) {
+                  finalMessage = String(result.message);
+                } else if (result && typeof result === 'object' && 'data' in result) {
+                  const data = result.data as { message?: string };
+                  finalMessage = data?.message || 'Command executed successfully';
+                } else {
+                  finalMessage = 'Command executed successfully';
+                }
+
+                setResponse(finalMessage);
+                setCurrentStep('Completed');
+              },
+
+              onError: (errorData) => {
+                console.error('❌ Error:', errorData);
+                const errorMsg = errorData.message || 'Something went wrong';
+                setError(errorMsg);
+                setResponse(errorMsg);
+                setCurrentStep('Error');
+
+                // Speak error in English
+                setIsSpeaking(true);
+                speechAPI.speak(`Error: ${errorMsg}`, {
+                  lang: 'en-US',
+                  onEnd: () => setIsSpeaking(false),
+                  onError: () => setIsSpeaking(false),
+                }).catch(console.error);
+              },
+
+              onDone: async () => {
+                console.log('🏁 Stream completed');
+                setIsProcessing(false);
+                setCurrentStep('');
+
+                // Call parent callback if provided
+                if (finalResult) {
+                  onCommandExecuted?.(finalTranscript, finalResult);
+                }
+
+                // Speak response in English
+                if (finalMessage && !error) {
+                  setIsSpeaking(true);
+                  await speechAPI.speak(finalMessage, {
+                    lang: 'en-US',
+                    onEnd: () => setIsSpeaking(false),
+                    onError: () => setIsSpeaking(false),
+                  }).catch(console.error);
+                }
+              }
             });
+
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Something went wrong';
             setError(errorMsg);
             setResponse(errorMsg);
+            setIsProcessing(false);
+            setCurrentStep('');
 
             // Speak error in English
             setIsSpeaking(true);
             await speechAPI.speak(`Error: ${errorMsg}`, {
-              lang: 'en-US', // Force English
+              lang: 'en-US',
               onEnd: () => setIsSpeaking(false),
               onError: () => setIsSpeaking(false),
-            });
-          } finally {
-            setIsProcessing(false);
+            }).catch(console.error);
           }
         },
 
@@ -228,6 +295,37 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
               <h3 className="text-sm font-semibold text-gray-500 mb-2">You said:</h3>
               <p className="text-lg text-gray-900 font-medium">{transcript}</p>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Real-time Progress Display */}
+      {isProcessing && currentStep && (
+        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-6 rounded-xl shadow-md mb-4 border border-indigo-200">
+          <div className="flex items-center gap-3 mb-4">
+            <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+            <h3 className="text-sm font-semibold text-indigo-900">Processing...</h3>
+          </div>
+          <div className="space-y-3">
+            {progressUpdates.map((update, idx) => (
+              <div
+                key={idx}
+                className={`flex items-start gap-3 transition-opacity ${
+                  idx === progressUpdates.length - 1 ? 'opacity-100' : 'opacity-60'
+                }`}
+              >
+                <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
+                  idx === progressUpdates.length - 1 ? 'bg-indigo-600 animate-pulse' : 'bg-gray-400'
+                }`}></div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-900">{update.step}</p>
+                  <p className="text-sm text-gray-600">{update.message}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {new Date(update.timestamp).toLocaleTimeString()}
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

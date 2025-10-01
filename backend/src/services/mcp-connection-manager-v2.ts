@@ -38,8 +38,8 @@ interface MCPEndpointConfig {
 const MCP_ENDPOINTS: Record<string, MCPEndpointConfig> = {
   google: {
     provider: 'google',
-    endpoint: process.env.MCP_GOOGLE_CALENDAR_ENDPOINT || 'https://mcp.googleapis.com/calendar',
-    transport: 'http-sse'
+    endpoint: 'local', // Local GoogleCalendarMCP class
+    transport: 'stdio'
   },
   slack: {
     provider: 'slack',
@@ -82,7 +82,7 @@ export class MCPConnectionManagerV2 {
 
       // Create MCP instance based on transport
       let mcpInstance: MCPInstance;
-      let tools: any[] = [];
+      let tools: unknown[] = [];
 
       if (endpointConfig.transport === 'http-sse') {
         // Get OAuth access token
@@ -238,16 +238,20 @@ export class MCPConnectionManagerV2 {
     provider: string,
     toolName: string,
     args: Record<string, unknown>
-  ): Promise<any> {
+  ): Promise<unknown> {
     const instance = this.getMCPInstance(userId, provider);
 
     if (!instance) {
       throw new Error(`No active MCP connection for ${provider}`);
     }
 
-    // Duck typing: check if instance has callTool method
-    if (typeof (instance as any).callTool === 'function') {
-      return await (instance as any).callTool(toolName, args);
+    // Duck typing: check if instance has executeTool (GoogleCalendarMCP) or callTool (MCPHttpClient)
+    if (typeof (instance as unknown as { executeTool?: (userId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown> }).executeTool === 'function') {
+      // GoogleCalendarMCP style: executeTool(userId, toolName, args)
+      return await (instance as unknown as { executeTool: (userId: string, toolName: string, args: Record<string, unknown>) => Promise<unknown> }).executeTool(userId, toolName, args);
+    } else if (typeof (instance as unknown as { callTool?: (toolName: string, args: Record<string, unknown>) => Promise<unknown> }).callTool === 'function') {
+      // MCPHttpClient style: callTool(toolName, args)
+      return await (instance as unknown as { callTool: (toolName: string, args: Record<string, unknown>) => Promise<unknown> }).callTool(toolName, args);
     } else {
       throw new Error(`Tool calling not supported for this MCP instance`);
     }
@@ -385,7 +389,16 @@ export class MCPConnectionManagerV2 {
     protocolVersion?: string
   ): Promise<void> {
     try {
-      const updateData: any = {
+      const updateData: {
+        mcpConnected: boolean;
+        mcpStatus: string;
+        mcpToolsCount?: number;
+        mcpError?: string | null;
+        mcpLastHealthCheck: Date;
+        mcpSessionId?: string | null;
+        mcpEndpoint?: string;
+        mcpProtocolVersion?: string;
+      } = {
         mcpConnected: status === 'connected',
         mcpStatus: status,
         mcpToolsCount: toolsCount,

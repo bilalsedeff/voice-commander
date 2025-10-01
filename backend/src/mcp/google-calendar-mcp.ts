@@ -5,12 +5,20 @@
  * Supports tool discovery and dynamic command execution
  */
 
-import { google } from 'googleapis';
+import { google, calendar_v3 } from 'googleapis';
 import * as chrono from 'chrono-node';
 import { PrismaClient } from '@prisma/client';
 import { decryptToken } from '../utils/encryption';
 import logger from '../utils/logger';
 import { MCPTool, MCPToolCallResult, RiskLevel } from './types';
+
+// Type aliases for clarity
+type Calendar = calendar_v3.Calendar;
+type CalendarEvent = calendar_v3.Schema$Event;
+type GoogleOAuthCredentials = {
+  access_token: string;
+  refresh_token?: string | null;
+};
 
 const prisma = new PrismaClient();
 
@@ -191,7 +199,7 @@ export class GoogleCalendarMCP {
    * Create a calendar event
    */
   private async createEvent(
-    calendar: any,
+    calendar: Calendar,
     args: Record<string, unknown>
   ): Promise<MCPToolCallResult> {
     const { summary, startTime, endTime, description, attendees, location } = args;
@@ -251,7 +259,7 @@ export class GoogleCalendarMCP {
    * List calendar events
    */
   private async listEvents(
-    calendar: any,
+    calendar: Calendar,
     args: Record<string, unknown>
   ): Promise<MCPToolCallResult> {
     const maxResults = args.maxResults ? parseInt(args.maxResults as string) : 10;
@@ -272,7 +280,7 @@ export class GoogleCalendarMCP {
       orderBy: 'startTime'
     });
 
-    const events = result.data.items?.map((event: any) => ({
+    const events = result.data.items?.map((event: CalendarEvent) => ({
       id: event.id,
       summary: event.summary,
       start: event.start?.dateTime || event.start?.date,
@@ -297,7 +305,7 @@ export class GoogleCalendarMCP {
    * Update calendar event
    */
   private async updateEvent(
-    calendar: any,
+    calendar: Calendar,
     args: Record<string, unknown>
   ): Promise<MCPToolCallResult> {
     const { eventId, summary, startTime, endTime } = args;
@@ -308,11 +316,11 @@ export class GoogleCalendarMCP {
       eventId: eventId as string
     });
 
-    const updatedEvent: any = {
+    const updatedEvent: CalendarEvent = {
       ...existingEvent.data
     };
 
-    if (summary) updatedEvent.summary = summary;
+    if (summary) updatedEvent.summary = summary as string;
     if (startTime) {
       const startDate = this.parseDateTime(startTime as string);
       updatedEvent.start = {
@@ -350,7 +358,7 @@ export class GoogleCalendarMCP {
    * Delete calendar event
    */
   private async deleteEvent(
-    calendar: any,
+    calendar: Calendar,
     args: Record<string, unknown>
   ): Promise<MCPToolCallResult> {
     const { eventId } = args;
@@ -374,7 +382,7 @@ export class GoogleCalendarMCP {
   /**
    * Get user's OAuth tokens from database
    */
-  private async getTokens(userId: string): Promise<any> {
+  private async getTokens(userId: string): Promise<GoogleOAuthCredentials> {
     const oauthToken = await prisma.oAuthToken.findFirst({
       where: {
         userId,
@@ -403,7 +411,7 @@ export class GoogleCalendarMCP {
   /**
    * Get authenticated Google Calendar client
    */
-  private async getCalendarClient(tokens: any): Promise<any> {
+  private async getCalendarClient(tokens: GoogleOAuthCredentials): Promise<Calendar> {
     const auth = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET

@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Mic, Settings, ArrowLeft, Info, CheckCircle, XCircle, User, LogOut, ChevronDown } from 'lucide-react';
+import { Mic, Settings, ArrowLeft, Info, CheckCircle, XCircle, User, LogOut, ChevronDown, Loader2 } from 'lucide-react';
 import VoiceInterface from '@/components/VoiceInterface';
 import ServiceCard from '@/components/ServiceCard';
 import { auth, oauth } from '@/lib/api';
@@ -16,7 +16,7 @@ const providerToServiceMap: Record<string, string> = {
   'github': 'github',
 };
 
-export default function DashboardPage() {
+function DashboardContent() {
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<'voice' | 'services'>('voice');
   const [services, setServices] = useState([
@@ -30,7 +30,7 @@ export default function DashboardPage() {
       mcpConnected: false,
       mcpStatus: 'disconnected',
       mcpToolsCount: 0,
-      mcpError: null,
+      mcpError: null as string | null,
     },
     {
       id: 'slack',
@@ -42,7 +42,7 @@ export default function DashboardPage() {
       mcpConnected: false,
       mcpStatus: 'disconnected',
       mcpToolsCount: 0,
-      mcpError: null,
+      mcpError: null as string | null,
     },
     {
       id: 'notion',
@@ -54,7 +54,7 @@ export default function DashboardPage() {
       mcpConnected: false,
       mcpStatus: 'disconnected',
       mcpToolsCount: 0,
-      mcpError: null,
+      mcpError: null as string | null,
     },
     {
       id: 'github',
@@ -66,11 +66,11 @@ export default function DashboardPage() {
       mcpConnected: false,
       mcpStatus: 'disconnected',
       mcpToolsCount: 0,
-      mcpError: null,
+      mcpError: null as string | null,
     },
   ]);
 
-  const [commandHistory, setCommandHistory] = useState<Array<{ command: string; result: any }>>([]);
+  const [commandHistory, setCommandHistory] = useState<Array<{ command: string; result: unknown }>>([]);
   const [oauthNotification, setOauthNotification] = useState<{
     type: 'success' | 'error';
     message: string;
@@ -379,12 +379,18 @@ export default function DashboardPage() {
               <div className="max-w-3xl mx-auto mt-12">
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Recent Commands</h2>
                 <div className="space-y-4">
-                  {commandHistory.map((item, idx) => (
-                    <div key={idx} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                      <p className="text-gray-900 font-medium mb-1">&quot;{item.command}&quot;</p>
-                      <p className="text-sm text-gray-600">{item.result.message}</p>
-                    </div>
-                  ))}
+                  {commandHistory.map((item, idx) => {
+                    const message = item.result && typeof item.result === 'object' && 'message' in item.result
+                      ? String(item.result.message)
+                      : 'Command executed';
+
+                    return (
+                      <div key={idx} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                        <p className="text-gray-900 font-medium mb-1">&quot;{item.command}&quot;</p>
+                        <p className="text-sm text-gray-600">{message}</p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -443,5 +449,20 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900">Loading dashboard...</h2>
+        </div>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }

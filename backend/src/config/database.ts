@@ -47,8 +47,8 @@ const prismaClientSingleton = (): PrismaClient => {
 // Use global variable in development to prevent multiple instances during hot reload
 const prisma = globalThis.prisma ?? prismaClientSingleton();
 
-// Set up logging
-prisma.$on('query', (e) => {
+// Set up logging with proper event types
+prisma.$on('query' as never, (e: { query: string; params: string; duration: number }) => {
   logger.debug('Database query', {
     query: e.query,
     params: e.params,
@@ -56,14 +56,14 @@ prisma.$on('query', (e) => {
   });
 });
 
-prisma.$on('error', (e) => {
+prisma.$on('error' as never, (e: { message: string; target: string }) => {
   logger.error('Database error', {
     message: e.message,
     target: e.target
   });
 });
 
-prisma.$on('warn', (e) => {
+prisma.$on('warn' as never, (e: { message: string; target: string }) => {
   logger.warn('Database warning', {
     message: e.message,
     target: e.target

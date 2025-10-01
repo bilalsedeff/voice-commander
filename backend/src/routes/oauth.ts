@@ -133,7 +133,7 @@ router.get(
       }
 
       // Exchange code for tokens
-      const { tokens, userId } = await oauthService.exchangeCodeForTokens(
+      const { tokens: _tokens, userId } = await oauthService.exchangeCodeForTokens(
         provider,
         code as string,
         state as string

@@ -14,31 +14,32 @@ datasource db {
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
-  password  String   // bcrypt hashed
-  name      String?  // nullable for social auth users
+  password  String // bcrypt hashed
+  name      String? // nullable for social auth users
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  oauthTokens    OAuthToken[]
-  voiceCommands  VoiceCommand[]
-  voiceSessions  VoiceSession[]
-  sessions       Session[]
+  oauthTokens   OAuthToken[]
+  voiceCommands VoiceCommand[]
+  voiceSessions VoiceSession[]
+  sessions      Session[]
+  mcpConfigs    UserMCPConfig[]
 
   @@map("users")
 }
 
 // OAuth tokens for third-party service integrations
 model OAuthToken {
-  id            String   @id @default(uuid())
-  userId        String
-  provider      String   // "google", "slack", "notion", "github"
-  accessToken   String   // AES-256 encrypted
-  refreshToken  String?  // AES-256 encrypted
-  expiresAt     DateTime?
-  scope         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String    @id @default(uuid())
+  userId       String
+  provider     String // "google", "slack", "notion", "github"
+  accessToken  String // AES-256 encrypted
+  refreshToken String? // AES-256 encrypted
+  expiresAt    DateTime?
+  scope        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -51,34 +52,34 @@ model OAuthToken {
 
 // Voice command history with conversation context
 model VoiceCommand {
-  id            String   @id @default(uuid())
-  userId        String
-  sessionId     String
-  transcript    String
-  intent        String?  // Parsed intent from LLM
+  id         String  @id @default(uuid())
+  userId     String
+  sessionId  String
+  transcript String
+  intent     String? // Parsed intent from LLM
 
   // Command execution details
-  mcpTool       String?
-  mcpParams     Json?
-  mcpResult     Json?
+  mcpTool   String?
+  mcpParams Json?
+  mcpResult Json?
 
   // Quality metrics
-  confidence    Float
-  riskLevel     String   // "safe", "low", "medium", "high"
-  success       Boolean
-  latency       Int      // milliseconds
-  error         String?
+  confidence Float
+  riskLevel  String // "safe", "low", "medium", "high"
+  success    Boolean
+  latency    Int // milliseconds
+  error      String?
 
   // Conversation flow
-  requiresClarification  Boolean  @default(false)
-  clarificationQuestion  String?
-  parentCommandId        String?  // Reference to previous command if this is a clarification
+  requiresClarification Boolean @default(false)
+  clarificationQuestion String?
+  parentCommandId       String? // Reference to previous command if this is a clarification
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @default(now())
 
   // Relations
-  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  session VoiceSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session VoiceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([sessionId])
@@ -89,21 +90,21 @@ model VoiceCommand {
 
 // Voice conversation sessions
 model VoiceSession {
-  id              String   @id @default(uuid())
-  userId          String
+  id     String @id @default(uuid())
+  userId String
 
   // Session metadata
-  startedAt       DateTime @default(now())
-  lastActivity    DateTime @default(now())
-  endedAt         DateTime?
-  isActive        Boolean  @default(true)
+  startedAt    DateTime  @default(now())
+  lastActivity DateTime  @default(now())
+  endedAt      DateTime?
+  isActive     Boolean   @default(true)
 
   // Short-term memory (last 10 interactions)
-  contextSummary  String?  // LLM-generated summary of conversation
+  contextSummary String? // LLM-generated summary of conversation
 
   // Session stats
-  commandCount    Int      @default(0)
-  successCount    Int      @default(0)
+  commandCount Int @default(0)
+  successCount Int @default(0)
 
   // Relations
   user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -119,7 +120,7 @@ model VoiceSession {
 model Session {
   id           String   @id @default(uuid())
   userId       String
-  token        String   // JWT token hash (not unique - users can have multiple sessions)
+  token        String // JWT token hash (not unique - users can have multiple sessions)
   refreshToken String   @unique
   expiresAt    DateTime
   createdAt    DateTime @default(now())
@@ -135,26 +136,26 @@ model Session {
 
 // Service connection status (denormalized for performance)
 model ServiceConnection {
-  id          String   @id @default(uuid())
-  userId      String
-  provider    String   // "google", "slack", "notion", "github"
+  id       String @id @default(uuid())
+  userId   String
+  provider String // "google", "slack", "notion", "github"
 
   // OAuth status
-  connected   Boolean  @default(false)
-  lastSync    DateTime?
+  connected Boolean   @default(false)
+  lastSync  DateTime?
 
   // MCP connection status
-  mcpConnected        Boolean   @default(false)
-  mcpStatus           String    @default("disconnected") // "connecting", "connected", "disconnected", "error"
-  mcpSessionId        String?   @db.VarChar(255) // Session ID from MCP server (UUID)
-  mcpEndpoint         String?   @db.Text // MCP server URL (e.g., https://mcp.google.com/calendar)
-  mcpProtocolVersion  String?   @db.VarChar(50) // Protocol version (e.g., "2025-03-26")
-  mcpLastHealthCheck  DateTime? // Last successful health check (ping)
-  mcpError            String?
-  mcpToolsCount       Int       @default(0)
+  mcpConnected       Boolean   @default(false)
+  mcpStatus          String    @default("disconnected") // "connecting", "connected", "disconnected", "error"
+  mcpSessionId       String?   @db.VarChar(255) // Session ID from MCP server (UUID)
+  mcpEndpoint        String?   @db.Text // MCP server URL (e.g., https://mcp.google.com/calendar)
+  mcpProtocolVersion String?   @db.VarChar(50) // Protocol version (e.g., "2025-03-26")
+  mcpLastHealthCheck DateTime? // Last successful health check (ping)
+  mcpError           String?
+  mcpToolsCount      Int       @default(0)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([userId, provider])
   @@index([userId])
@@ -162,38 +163,94 @@ model ServiceConnection {
   @@map("service_connections")
 }
 
-// MCP Server marketplace catalog
+// MCP Server marketplace catalog (Smithery, mcpservers.org, etc.)
 model MCPServer {
-  id              String   @id @default(uuid())
-  name            String   @unique
-  displayName     String
-  description     String
-  category        String   // "productivity", "development", "communication", "data", "ai"
-  iconUrl         String?
+  id          String  @id @default(uuid())
+  name        String  @unique // e.g., "@takumi0706/google-calendar-mcp"
+  displayName String // e.g., "Google Calendar"
+  description String
+  category    String // "productivity", "development", "communication", "data", "ai"
+  iconUrl     String?
+
+  // MCP Type
+  authType String // "oauth" | "api_key" | "none"
+  provider String? // "google" | "slack" | "openai" | null (for generic MCPs)
 
   // Installation info
-  isOfficial      Boolean  @default(false)
-  requiresAuth    Boolean  @default(true)
-  connectionType  String   // "stdio", "http", "websocket"
-  installCommand  String?  // e.g., "npx @upstash/context7-mcp"
-  configExample   Json?    // Configuration example
+  transport  String // "stdio" | "http-sse" | "websocket"
+  npmPackage String? // e.g., "@takumi0706/google-calendar-mcp"
+  command    String // "npx" | "docker" | "node"
+  args       Json // ["@takumi0706/google-calendar-mcp"] or custom args
+
+  // OAuth configuration (if authType = "oauth")
+  oauthScopes Json? // ["calendar.events", "calendar.readonly"]
+
+  // API Key configuration (if authType = "api_key")
+  apiKeyEnvVar String? // e.g., "OPENAI_API_KEY"
+  apiKeyLabel  String? // e.g., "OpenAI API Key"
+
+  // Hosted MCP info (if transport = "http-sse")
+  hostedUrl String? // e.g., "https://mcp.context7.com/mcp"
 
   // MCP metadata
-  tools           Json     // Array of tool definitions
-  version         String   @default("1.0.0")
-  author          String?
-  repository      String?  // GitHub repo URL
-  documentation   String?  // Docs URL
+  tools         Json // Array of tool definitions (from discovery)
+  version       String  @default("1.0.0")
+  author        String?
+  repository    String? // GitHub repo URL
+  documentation String? // Docs URL
 
   // Stats
-  installCount    Int      @default(0)
-  rating          Float?
+  installCount Int    @default(0)
+  rating       Float?
 
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  userConfigs UserMCPConfig[]
 
   @@index([category])
+  @@index([authType])
+  @@index([provider])
   @@index([isActive])
   @@map("mcp_servers")
+}
+
+// User-specific MCP configuration & credentials
+model UserMCPConfig {
+  id          String @id @default(uuid())
+  userId      String
+  mcpServerId String
+
+  // Connection status
+  status      String  @default("disconnected") // "disconnected" | "connecting" | "connected" | "error"
+  processId   String? // Child process PID (development)
+  containerId String? // Docker container ID (production)
+
+  // OAuth credentials (encrypted) - if authType = "oauth"
+  oauthAccessToken  String? // AES-256 encrypted
+  oauthRefreshToken String? // AES-256 encrypted
+  oauthExpiresAt    DateTime?
+
+  // API Key (encrypted) - if authType = "api_key"
+  apiKey String? // AES-256 encrypted
+
+  // MCP session info
+  mcpSessionId    String? // Session ID from MCP server
+  lastHealthCheck DateTime?
+  toolsDiscovered Json? // Cached tool list
+  error           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mcpServer MCPServer @relation(fields: [mcpServerId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, mcpServerId])
+  @@index([userId])
+  @@index([status])
+  @@map("user_mcp_configs")
 }

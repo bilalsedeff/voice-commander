@@ -148,7 +148,7 @@ Response format (JSON):
    */
   private buildUserPrompt(
     voiceCommand: string,
-    context?: ConversationContext
+    _context?: ConversationContext
   ): string {
     return `Parse this voice command and respond with JSON:\n\n"${voiceCommand}"`;
   }
@@ -158,7 +158,7 @@ Response format (JSON):
    */
   private fallbackParser(
     voiceCommand: string,
-    availableTools: Record<string, MCPTool[]>
+    _availableTools: Record<string, MCPTool[]>
   ): IntentParseResult {
     const commandLower = voiceCommand.toLowerCase();
 

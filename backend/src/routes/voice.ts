@@ -7,9 +7,10 @@
 
 import { Router, Request, Response } from 'express';
 import { VoiceOrchestrator } from '../orchestrator/voice-orchestrator';
-import { llmMCPOrchestrator } from '../services/llm-mcp-orchestrator';
+import { llmMCPOrchestrator, OrchestrationResult } from '../services/llm-mcp-orchestrator';
 import { authenticateToken } from '../middleware/auth';
 import { PrismaClient } from '@prisma/client';
+import { CommandExecutionResult, ChainedCommandResult } from '../mcp/types';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -285,7 +286,7 @@ router.post('/llm/stream', authenticateToken, async (req: Request, res: Response
     res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
 
     // Helper function to send SSE message
-    const sendSSE = (event: string, data: any) => {
+    const sendSSE = (event: string, data: unknown) => {
       res.write(`event: ${event}\n`);
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
@@ -452,44 +453,130 @@ router.get('/examples', authenticateToken, async (req: Request, res: Response): 
 /**
  * Generate user-friendly response message
  */
-function generateResponseMessage(result: any): string {
+function generateResponseMessage(result: CommandExecutionResult | ChainedCommandResult | OrchestrationResult): string {
+  // Check if it's an orchestration result
+  if ('results' in result && 'progressUpdates' in result) {
+    const successCount = result.results.filter(r => r.success).length;
+    const totalCount = result.results.length;
+    if (result.needsClarification) {
+      return result.clarificationQuestion || 'Please provide more information.';
+    }
+    return `Executed ${successCount} out of ${totalCount} commands successfully.`;
+  }
+
   // Check if it's a chained result
   if ('totalCommands' in result) {
     const { totalCommands, successCount } = result;
     return `Executed ${successCount} out of ${totalCommands} commands successfully.`;
   }
 
-  // Single command result
+  // Single command result (CommandExecutionResult)
   if (!result.success) {
-    if (result.error === 'CONFIRMATION_REQUIRED') {
-      return result.data?.message || 'This command requires confirmation.';
+    if ('error' in result && result.error === 'CONFIRMATION_REQUIRED') {
+      return ('data' in result && result.data && typeof result.data === 'object' && 'message' in result.data)
+        ? String(result.data.message)
+        : 'This command requires confirmation.';
     }
-    if (result.error === 'HIGH_RISK_CONFIRMATION_REQUIRED') {
-      return result.data?.message || 'This high-risk command requires manual approval.';
+    if ('error' in result && result.error === 'HIGH_RISK_CONFIRMATION_REQUIRED') {
+      return ('data' in result && result.data && typeof result.data === 'object' && 'message' in result.data)
+        ? String(result.data.message)
+        : 'This high-risk command requires manual approval.';
     }
-    return result.error || 'Command execution failed.';
+    return ('error' in result && result.error) ? result.error : 'Command execution failed.';
   }
 
-  // Success message based on service
-  const { service, action, data } = result;
+  // Success message based on service (CommandExecutionResult only)
+  if ('service' in result && 'action' in result && 'data' in result) {
+    const { service, action, data } = result;
 
-  if (service === 'google_calendar') {
-    switch (action) {
-      case 'create_event':
-        return `✅ Event "${data.summary}" created successfully. ${data.attendees > 0 ? `Invited ${data.attendees} attendees.` : ''}`;
+    if (service === 'google_calendar' && data && typeof data === 'object') {
+      switch (action) {
+        case 'create_event':
+          const summary = 'summary' in data ? String(data.summary) : 'Event';
+          const attendees = 'attendees' in data && typeof data.attendees === 'number' ? data.attendees : 0;
+          return `✅ Event "${summary}" created successfully. ${attendees > 0 ? `Invited ${attendees} attendees.` : ''}`;
 
-      case 'list_events':
-        return `📅 Found ${data.count} upcoming events.`;
+        case 'list_events':
+          const count = 'count' in data && typeof data.count === 'number' ? data.count : 0;
+          return `📅 Found ${count} upcoming events.`;
 
-      case 'update_event':
-        return `✅ Event updated successfully.`;
+        case 'update_event':
+          return `✅ Event updated successfully.`;
 
-      case 'delete_event':
-        return `✅ Event deleted successfully.`;
+        case 'delete_event':
+          return `✅ Event deleted successfully.`;
+      }
     }
   }
 
   return '✅ Command executed successfully.';
 }
+
+/**
+ * GET /api/voice/mcp-status
+ * Get user's MCP server connection status
+ */
+router.get('/mcp-status', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+
+    // Get user's MCP configurations with server info
+    const mcpConfigs = await prisma.userMCPConfig.findMany({
+      where: { userId },
+      include: {
+        mcpServer: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            provider: true,
+            category: true,
+            iconUrl: true,
+            authType: true
+          }
+        }
+      },
+      orderBy: {
+        updatedAt: 'desc'
+      }
+    });
+
+    const mcpStatus = mcpConfigs.map(config => ({
+      mcpServerId: config.mcpServerId,
+      name: config.mcpServer.name,
+      displayName: config.mcpServer.displayName,
+      provider: config.mcpServer.provider,
+      category: config.mcpServer.category,
+      iconUrl: config.mcpServer.iconUrl,
+      authType: config.mcpServer.authType,
+      status: config.status,
+      isRunning: config.processId !== null,
+      toolsCount: Array.isArray(config.toolsDiscovered) ? config.toolsDiscovered.length : 0,
+      lastHealthCheck: config.lastHealthCheck,
+      error: config.error,
+      createdAt: config.createdAt,
+      updatedAt: config.updatedAt
+    }));
+
+    res.json({
+      success: true,
+      mcpServers: mcpStatus,
+      totalCount: mcpStatus.length,
+      connectedCount: mcpStatus.filter(m => m.status === 'connected').length
+    });
+
+  } catch (error) {
+    logger.error('MCP status fetch error', {
+      error: (error as Error).message,
+      stack: (error as Error).stack
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'MCP_STATUS_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
 
 export default router;

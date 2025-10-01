@@ -80,7 +80,7 @@ app.use('/api', apiRateLimiter);
 // ============================================================================
 
 // Health check endpoint
-app.get('/health', async (req: Request, res: Response) => {
+app.get('/health', async (_req: Request, res: Response) => {
   try {
     const dbHealthy = await healthCheck();
 
@@ -113,7 +113,7 @@ app.get('/health', async (req: Request, res: Response) => {
 });
 
 // API version endpoint
-app.get('/api', (req: Request, res: Response) => {
+app.get('/api', (_req: Request, res: Response) => {
   res.json({
     name: 'Voice Commander API',
     version: '1.0.0',
@@ -165,7 +165,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Global error handler
-app.use((error: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled error', {
     error: error.message,
     stack: error.stack,

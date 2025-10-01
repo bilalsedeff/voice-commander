@@ -89,6 +89,16 @@ project-roadmap.md
 archive/
 CLAUDE.md
 docs/
+ARCHITECTURE-LLM-MCP-ORCHESTRATION.md
+BACKEND-IMPLEMENTATION-COMPLETE.md
+LLM-MCP-IMPLEMENTATION-SUMMARY.md
+MCP-ARCHITECTURE-IMPLEMENTATION.md
+ROADMAP-STATUS.md
+SSE-IMPLEMENTATION-COMPLETE.md
+SSE-STREAMING-DESIGN.md
+TESTING-CHECKLIST.md
+TESTING-SUMMARY.md
+WINDOWS-NPX-FIX.md
 #voice-commander-web-mvp.md
 
 # Package lock files (if using yarn, npm, or pnpm, only one lock file should be present)
@@ -97,6 +107,7 @@ yarn.lock
 pnpm-lock.yaml
 **/node_modules/
 */package-lock.json
+
 
 # Windows system files
 nul

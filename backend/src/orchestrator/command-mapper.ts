@@ -264,8 +264,8 @@ export class CommandMapper {
           { maxResults: '5' }
         );
 
-        if (result && result.events) {
-          const events = result.events;
+        if (result && (result as any).events) {
+          const events = (result as any).events;
           if (events && events.length > 0) {
             // Use the first (most recent) event
             command.params.eventId = events[0].id;

@@ -4,8 +4,44 @@
  * No API costs - runs entirely in the browser
  */
 
+// TypeScript interfaces for Web Speech API
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onstart: ((this: SpeechRecognition, ev: Event) => void) | null;
+  onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => void) | null;
+  onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => void) | null;
+  onend: ((this: SpeechRecognition, ev: Event) => void) | null;
+}
+
+interface SpeechRecognitionConstructor {
+  new(): SpeechRecognition;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
+
 export class SpeechAPI {
-  private recognition: any;
+  private recognition: SpeechRecognition;
   private synthesis: SpeechSynthesis;
   private onTranscriptCallback?: (transcript: string) => void;
   private onInterimCallback?: (transcript: string) => void;
@@ -14,9 +50,7 @@ export class SpeechAPI {
 
   constructor() {
     // Initialize Speech Recognition (STT)
-    const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       throw new Error('Speech Recognition not supported in this browser. Please use Chrome, Edge, or Safari.');
@@ -40,7 +74,7 @@ export class SpeechAPI {
       this.isListening = true;
     };
 
-    this.recognition.onresult = (event: any) => {
+    this.recognition.onresult = (event: SpeechRecognitionEvent) => {
       const results = event.results;
       const lastResult = results[results.length - 1];
 
@@ -57,7 +91,7 @@ export class SpeechAPI {
       }
     };
 
-    this.recognition.onerror = (event: any) => {
+    this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('❌ Speech recognition error:', event.error);
       this.isListening = false;
 

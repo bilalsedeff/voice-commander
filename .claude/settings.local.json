@@ -43,7 +43,11 @@
       "Bash(docker-compose up:*)",
       "Bash(nslookup:*)",
       "Bash(whois:*)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(powershell:*)",
+      "Bash(rd:*)",
+      "Bash(PORT=3002 npm run dev)",
+      "Bash(PORT=3005 npm run dev)"
     ],
     "deny": [],
     "ask": []

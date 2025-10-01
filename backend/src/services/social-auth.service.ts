@@ -229,8 +229,6 @@ export async function handleSocialAuthCallback(
     // Get user info from provider
     let email: string;
     let name: string | null;
-    let providerId: string;
-    let avatarUrl: string | null = null;
 
     if (provider === 'google') {
       let userInfoResponse;
@@ -260,8 +258,8 @@ export async function handleSocialAuthCallback(
 
       email = userInfo.email;
       name = userInfo.name;
-      providerId = userInfo.sub;
-      avatarUrl = userInfo.picture || null;
+      // providerId = userInfo.sub; // Reserved for future use
+      // avatarUrl = userInfo.picture || null; // Reserved for future use
 
       if (!userInfo.email_verified) {
         throw new Error('Google email not verified');
@@ -279,8 +277,8 @@ export async function handleSocialAuthCallback(
 
       const userInfo = userInfoResponse.data;
       name = userInfo.name || userInfo.login;
-      providerId = userInfo.id.toString();
-      avatarUrl = userInfo.avatar_url;
+      // providerId = userInfo.id.toString(); // Reserved for future use
+      // avatarUrl = userInfo.avatar_url; // Reserved for future use
 
       // GitHub might not return email in user endpoint
       if (userInfo.email) {

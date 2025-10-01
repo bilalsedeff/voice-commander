@@ -1,16 +1,13 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 
 /**
- * OAuth Callback Handler
- *
- * Handles the OAuth callback from social providers (Google, GitHub)
- * Extracts tokens from URL and stores them in localStorage
+ * OAuth Callback Handler Component (wrapped in Suspense)
  */
-export default function AuthCallbackPage() {
+function CallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -46,5 +43,26 @@ export default function AuthCallbackPage() {
         <p className="text-gray-600 mt-2">Please wait while we redirect you</p>
       </div>
     </div>
+  );
+}
+
+/**
+ * OAuth Callback Handler Page
+ *
+ * Handles the OAuth callback from social providers (Google, GitHub)
+ * Extracts tokens from URL and stores them in localStorage
+ */
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 text-indigo-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900">Loading...</h2>
+        </div>
+      </div>
+    }>
+      <CallbackContent />
+    </Suspense>
   );
 }

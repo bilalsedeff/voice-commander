@@ -45,7 +45,7 @@ export interface RefreshTokenDTO {
 export interface UserResponse {
   id: string;
   email: string;
-  name: string;
+  name: string | null;
   createdAt: Date;
 }
 

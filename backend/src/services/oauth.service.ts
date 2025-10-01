@@ -50,14 +50,17 @@ export interface OAuthUserInfo {
   picture?: string;
 }
 
-// Temporary PKCE state storage (in production, use Redis)
-const pkceStateStore = new Map<string, {
+// PKCE state data type
+type PKCEStateData = {
   codeVerifier: string;
   state: string;
   userId: string;
   provider: string;
   timestamp: number;
-}>();
+};
+
+// Temporary PKCE state storage (in production, use Redis)
+const pkceStateStore = new Map<string, PKCEStateData>();
 
 /**
  * Get OAuth provider configuration
@@ -208,7 +211,7 @@ export async function exchangeCodeForTokens(
 ): Promise<{ tokens: OAuthTokens; userId: string }> {
   try {
     // Find and validate PKCE state
-    let pkceData: typeof pkceStateStore extends Map<string, infer T> ? T : never | undefined;
+    let pkceData: PKCEStateData | undefined = undefined;
     let stateKey = '';
 
     for (const [key, value] of pkceStateStore.entries()) {
@@ -294,32 +297,61 @@ async function storeOAuthTokens(
       ? new Date(Date.now() + tokens.expiresIn * 1000)
       : null;
 
-    // Upsert OAuth token
-    await prisma.oAuthToken.upsert({
-      where: {
-        userId_provider: {
+    // Find MCP server for this provider
+    const mcpServer = await prisma.mCPServer.findFirst({
+      where: { provider, authType: 'oauth' }
+    });
+
+    if (!mcpServer) {
+      logger.warn('No MCP server found for provider', { provider });
+      // Still store in old table for backward compatibility
+      await prisma.oAuthToken.upsert({
+        where: { userId_provider: { userId, provider } },
+        create: {
           userId,
-          provider
+          provider,
+          accessToken: encryptedAccessToken,
+          refreshToken: encryptedRefreshToken,
+          expiresAt,
+          scope: tokens.scope
+        },
+        update: {
+          accessToken: encryptedAccessToken,
+          refreshToken: encryptedRefreshToken,
+          expiresAt,
+          scope: tokens.scope,
+          updatedAt: new Date()
+        }
+      });
+      return;
+    }
+
+    // Store in new UserMCPConfig table
+    await prisma.userMCPConfig.upsert({
+      where: {
+        userId_mcpServerId: {
+          userId,
+          mcpServerId: mcpServer.id
         }
       },
       create: {
         userId,
-        provider,
-        accessToken: encryptedAccessToken,
-        refreshToken: encryptedRefreshToken,
-        expiresAt,
-        scope: tokens.scope
+        mcpServerId: mcpServer.id,
+        oauthAccessToken: encryptedAccessToken,
+        oauthRefreshToken: encryptedRefreshToken,
+        oauthExpiresAt: expiresAt,
+        status: 'disconnected'
       },
       update: {
-        accessToken: encryptedAccessToken,
-        refreshToken: encryptedRefreshToken,
-        expiresAt,
-        scope: tokens.scope,
+        oauthAccessToken: encryptedAccessToken,
+        oauthRefreshToken: encryptedRefreshToken,
+        oauthExpiresAt: expiresAt,
+        status: 'disconnected',
         updatedAt: new Date()
       }
     });
 
-    // Update service connection status
+    // Update service connection status (for frontend compatibility)
     await prisma.serviceConnection.upsert({
       where: {
         userId_provider: {
@@ -342,20 +374,22 @@ async function storeOAuthTokens(
 
     logger.info('OAuth tokens stored successfully', {
       userId,
-      provider
+      provider,
+      mcpServerId: mcpServer.id
     });
 
-    // Auto-start MCP connection after OAuth authorization
+    // Auto-start MCP process after OAuth authorization
     try {
-      const { mcpConnectionManager } = await import('./mcp-connection-manager');
-      await mcpConnectionManager.connectMCPServer(userId, provider);
-      logger.info('MCP connection auto-started after OAuth', {
+      const { mcpProcessManager } = await import('./mcp-process-manager');
+      await mcpProcessManager.startMCP(userId, mcpServer.id);
+      logger.info('MCP process auto-started after OAuth', {
         userId,
-        provider
+        provider,
+        mcpServerId: mcpServer.id
       });
     } catch (mcpError) {
       // Don't fail OAuth flow if MCP connection fails
-      logger.warn('MCP auto-connection failed, will retry later', {
+      logger.warn('MCP auto-start failed, will retry later', {
         userId,
         provider,
         error: (mcpError as Error).message
