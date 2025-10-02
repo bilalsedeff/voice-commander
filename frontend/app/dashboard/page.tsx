@@ -1,9 +1,8 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Mic, Settings, ArrowLeft, Info, CheckCircle, XCircle, User, LogOut, ChevronDown, Loader2 } from 'lucide-react';
+import { Mic, Settings, Info, CheckCircle, XCircle, User, LogOut, ChevronDown, Loader2 } from 'lucide-react';
 import VoiceInterface from '@/components/VoiceInterface';
 import ServiceCard from '@/components/ServiceCard';
 import { auth, oauth } from '@/lib/api';
@@ -218,11 +217,6 @@ function DashboardContent() {
       <nav className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <Link href="/" className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
-              <ArrowLeft className="w-5 h-5" />
-              <span className="font-medium">Back</span>
-            </Link>
-            <div className="h-6 w-px bg-gray-300"></div>
             <div className="flex items-center gap-2">
               <Mic className="w-6 h-6 text-indigo-600" />
               <span className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
@@ -369,51 +363,52 @@ function DashboardContent() {
           </div>
         )}
 
-        {activeTab === 'voice' ? (
-          <div>
-            {/* Voice Interface */}
-            <VoiceInterface onCommandExecuted={handleCommandExecuted} />
+        {/* Voice Commands Tab - Always rendered to preserve state */}
+        <div className={activeTab === 'voice' ? 'block' : 'hidden'}>
+          {/* Voice Interface */}
+          <VoiceInterface onCommandExecuted={handleCommandExecuted} />
 
-            {/* Command History */}
-            {commandHistory.length > 0 && (
-              <div className="max-w-3xl mx-auto mt-12">
-                <h2 className="text-2xl font-bold text-gray-900 mb-6">Recent Commands</h2>
-                <div className="space-y-4">
-                  {commandHistory.map((item, idx) => {
-                    const message = item.result && typeof item.result === 'object' && 'message' in item.result
-                      ? String(item.result.message)
-                      : 'Command executed';
+          {/* Command History */}
+          {commandHistory.length > 0 && (
+            <div className="max-w-3xl mx-auto mt-12">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">Recent Commands</h2>
+              <div className="space-y-4">
+                {commandHistory.map((item, idx) => {
+                  const message = item.result && typeof item.result === 'object' && 'message' in item.result
+                    ? String(item.result.message)
+                    : 'Command executed';
 
-                    return (
-                      <div key={idx} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-                        <p className="text-gray-900 font-medium mb-1">&quot;{item.command}&quot;</p>
-                        <p className="text-sm text-gray-600">{message}</p>
-                      </div>
-                    );
-                  })}
-                </div>
+                  return (
+                    <div key={idx} className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
+                      <p className="text-gray-900 font-medium mb-1">&quot;{item.command}&quot;</p>
+                      <p className="text-sm text-gray-600">{message}</p>
+                    </div>
+                  );
+                })}
               </div>
-            )}
-          </div>
-        ) : (
-          <div>
-            <div className="mb-8">
-              <h2 className="text-3xl font-bold text-gray-900 mb-2">Connected Services</h2>
-              <p className="text-gray-600">
-                Connect your favorite apps to control them with voice commands
-              </p>
             </div>
+          )}
+        </div>
 
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {services.map((service) => (
-                <ServiceCard
-                  key={service.id}
-                  service={service}
-                  onConnect={handleServiceConnect}
-                  onDisconnect={handleServiceDisconnect}
-                />
-              ))}
-            </div>
+        {/* Connected Services Tab */}
+        <div className={activeTab === 'services' ? 'block' : 'hidden'}>
+          <div className="mb-8">
+            <h2 className="text-3xl font-bold text-gray-900 mb-2">Connected Services</h2>
+            <p className="text-gray-600">
+              Connect your favorite apps to control them with voice commands
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {services.map((service) => (
+              <ServiceCard
+                key={service.id}
+                service={service}
+                onConnect={handleServiceConnect}
+                onDisconnect={handleServiceDisconnect}
+              />
+            ))}
+          </div>
 
             {/* Info Section */}
             <div className="mt-12 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-8 border border-indigo-200">
@@ -445,8 +440,7 @@ function DashboardContent() {
                 </li>
               </ol>
             </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
   );

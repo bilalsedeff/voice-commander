@@ -99,6 +99,8 @@ SSE-STREAMING-DESIGN.md
 TESTING-CHECKLIST.md
 TESTING-SUMMARY.md
 WINDOWS-NPX-FIX.md
+RESTART-CLEAN.md
+
 #voice-commander-web-mvp.md
 
 # Package lock files (if using yarn, npm, or pnpm, only one lock file should be present)

@@ -297,59 +297,57 @@ async function storeOAuthTokens(
       ? new Date(Date.now() + tokens.expiresIn * 1000)
       : null;
 
+    // ALWAYS store in OAuthToken table (for embedded MCP like GoogleCalendarMCP)
+    await prisma.oAuthToken.upsert({
+      where: { userId_provider: { userId, provider } },
+      create: {
+        userId,
+        provider,
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
+        expiresAt,
+        scope: tokens.scope
+      },
+      update: {
+        accessToken: encryptedAccessToken,
+        refreshToken: encryptedRefreshToken,
+        expiresAt,
+        scope: tokens.scope,
+        updatedAt: new Date()
+      }
+    });
+
     // Find MCP server for this provider
     const mcpServer = await prisma.mCPServer.findFirst({
       where: { provider, authType: 'oauth' }
     });
 
-    if (!mcpServer) {
-      logger.warn('No MCP server found for provider', { provider });
-      // Still store in old table for backward compatibility
-      await prisma.oAuthToken.upsert({
-        where: { userId_provider: { userId, provider } },
+    if (mcpServer) {
+      // Also store in UserMCPConfig table (for process-based MCP)
+      await prisma.userMCPConfig.upsert({
+        where: {
+          userId_mcpServerId: {
+            userId,
+            mcpServerId: mcpServer.id
+          }
+        },
         create: {
           userId,
-          provider,
-          accessToken: encryptedAccessToken,
-          refreshToken: encryptedRefreshToken,
-          expiresAt,
-          scope: tokens.scope
+          mcpServerId: mcpServer.id,
+          oauthAccessToken: encryptedAccessToken,
+          oauthRefreshToken: encryptedRefreshToken,
+          oauthExpiresAt: expiresAt,
+          status: 'disconnected'
         },
         update: {
-          accessToken: encryptedAccessToken,
-          refreshToken: encryptedRefreshToken,
-          expiresAt,
-          scope: tokens.scope,
+          oauthAccessToken: encryptedAccessToken,
+          oauthRefreshToken: encryptedRefreshToken,
+          oauthExpiresAt: expiresAt,
+          status: 'disconnected',
           updatedAt: new Date()
         }
       });
-      return;
     }
-
-    // Store in new UserMCPConfig table
-    await prisma.userMCPConfig.upsert({
-      where: {
-        userId_mcpServerId: {
-          userId,
-          mcpServerId: mcpServer.id
-        }
-      },
-      create: {
-        userId,
-        mcpServerId: mcpServer.id,
-        oauthAccessToken: encryptedAccessToken,
-        oauthRefreshToken: encryptedRefreshToken,
-        oauthExpiresAt: expiresAt,
-        status: 'disconnected'
-      },
-      update: {
-        oauthAccessToken: encryptedAccessToken,
-        oauthRefreshToken: encryptedRefreshToken,
-        oauthExpiresAt: expiresAt,
-        status: 'disconnected',
-        updatedAt: new Date()
-      }
-    });
 
     // Update service connection status (for frontend compatibility)
     await prisma.serviceConnection.upsert({
@@ -375,26 +373,11 @@ async function storeOAuthTokens(
     logger.info('OAuth tokens stored successfully', {
       userId,
       provider,
-      mcpServerId: mcpServer.id
+      mcpServerId: mcpServer?.id
     });
 
-    // Auto-start MCP process after OAuth authorization
-    try {
-      const { mcpProcessManager } = await import('./mcp-process-manager');
-      await mcpProcessManager.startMCP(userId, mcpServer.id);
-      logger.info('MCP process auto-started after OAuth', {
-        userId,
-        provider,
-        mcpServerId: mcpServer.id
-      });
-    } catch (mcpError) {
-      // Don't fail OAuth flow if MCP connection fails
-      logger.warn('MCP auto-start failed, will retry later', {
-        userId,
-        provider,
-        error: (mcpError as Error).message
-      });
-    }
+    // ✅ MCP connection handled by MCPConnectionManagerV2 (embedded GoogleCalendarMCP)
+    // No external process needed - uses user's OAuth tokens directly with googleapis
 
   } catch (error) {
     logger.error('Failed to store OAuth tokens', {

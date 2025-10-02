@@ -279,7 +279,7 @@ export const voice = {
           'Authorization': `Bearer ${token}`,
           'Accept': 'text/event-stream',
         },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ query: command }),
       });
 
       if (!response.ok) {
@@ -427,6 +427,39 @@ export const voice = {
 
     if (!response.ok) {
       throw new Error('Failed to get examples');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Get MCP server status
+   */
+  async getMCPStatus(): Promise<{
+    success: boolean;
+    mcpServers: Array<{
+      mcpServerId: string;
+      name: string;
+      displayName: string;
+      provider: string | null;
+      category: string | null;
+      iconUrl: string | null;
+      authType: string;
+      status: string;
+      isRunning: boolean;
+      toolsCount: number;
+      lastHealthCheck: Date | null;
+      error: string | null;
+      createdAt: Date;
+      updatedAt: Date;
+    }>;
+    totalCount: number;
+    connectedCount: number;
+  }> {
+    const response = await authenticatedFetch('/api/voice/mcp-status');
+
+    if (!response.ok) {
+      throw new Error('Failed to get MCP status');
     }
 
     return response.json();

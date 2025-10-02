@@ -86,30 +86,20 @@ export class MCPProcessManager {
         env[mcpServer.apiKeyEnvVar] = apiKey;
       }
 
-      // Spawn child process (Cross-platform: Windows dev + Linux prod)
+      // Spawn child process (Windows compatibility)
       const args = mcpServer.args as string[];
       let command = mcpServer.command;
       let spawnArgs = args;
 
-      // Windows: Use shell for npx (development only, safe)
-      // Linux: Direct spawn without shell (production, secure)
-      const isWindows = process.platform === 'win32';
-      const useShell = isWindows && command === 'npx';
-
-      logger.info('Spawning MCP process', {
-        userId,
-        mcpServerId,
-        name: mcpServer.name,
-        command,
-        args: spawnArgs,
-        platform: process.platform,
-        useShell
-      });
+      // Windows requires .cmd extension for npm commands
+      if (process.platform === 'win32' && command === 'npx') {
+        command = 'npx.cmd';
+      }
 
       const childProcess = spawn(command, spawnArgs, {
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-        shell: useShell  // Windows dev: true, Linux prod: false
+        shell: false
       });
 
       logger.info('MCP process spawned', {

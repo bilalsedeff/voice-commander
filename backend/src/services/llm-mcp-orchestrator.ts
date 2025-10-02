@@ -12,6 +12,7 @@
  */
 
 import { mcpProcessManager } from './mcp-process-manager';
+import { mcpConnectionManagerV2 } from './mcp-connection-manager-v2';
 import { llmService, LLMTaskType } from './llm-service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
@@ -264,37 +265,52 @@ export class LLMMCPOrchestrator {
       return cached.tools;
     }
 
-    logger.info('Discovering MCP tools from database', { userId });
+    logger.info('Discovering MCP tools from connected services', { userId });
 
     const toolRegistry: ToolRegistry = {};
 
-    // Get all user's MCP configurations with discovered tools
-    const userMCPConfigs = await prisma.userMCPConfig.findMany({
+    // Get connected services from ServiceConnection table
+    const connections = await prisma.serviceConnection.findMany({
       where: {
         userId,
-        status: 'connected' // Only connected MCPs
-      },
-      include: {
-        mcpServer: true // Include server info for provider name
+        mcpConnected: true,
+        mcpStatus: 'connected'
       }
     });
 
-    // Filter out MCPs without discovered tools
-    const validConfigs = userMCPConfigs.filter(c => c.toolsDiscovered && Array.isArray(c.toolsDiscovered));
-
-    for (const config of validConfigs) {
-      const { mcpServer, toolsDiscovered } = config;
+    for (const connection of connections) {
+      const { provider } = connection;
 
       try {
+        // Get MCP instance
+        const mcpInstance = mcpConnectionManagerV2.getMCPInstance(userId, provider);
+
+        if (!mcpInstance) {
+          logger.warn('MCP instance not found for provider', { userId, provider });
+          continue;
+        }
+
+        // Get tools from MCP instance
+        let toolsFromMCP: unknown[] = [];
+
+        if (typeof (mcpInstance as any).discoverTools === 'function') {
+          toolsFromMCP = await (mcpInstance as any).discoverTools();
+        } else if (typeof (mcpInstance as any).listTools === 'function') {
+          toolsFromMCP = await (mcpInstance as any).listTools();
+        }
+
+        if (!toolsFromMCP || toolsFromMCP.length === 0) {
+          logger.warn('No tools discovered for provider', { userId, provider });
+          continue;
+        }
+
         // Map provider to service name
-        const serviceName = mcpServer.provider === 'google'
+        const serviceName = provider === 'google'
           ? 'google_calendar'
-          : mcpServer.provider || mcpServer.name;
+          : provider;
 
-        // Convert stored tools to LLM-friendly format
-        const tools = (toolsDiscovered as unknown[]) || [];
-
-        toolRegistry[serviceName] = tools.map(tool => {
+        // Convert MCPTool format to LLM-friendly format
+        toolRegistry[serviceName] = toolsFromMCP.map(tool => {
           const t = tool as Record<string, unknown>;
           const inputSchema = t.inputSchema as Record<string, unknown> | undefined;
           const properties = inputSchema?.properties as Record<string, Record<string, unknown>> | undefined;
@@ -319,14 +335,16 @@ export class LLMMCPOrchestrator {
         });
 
         logger.debug('Loaded tools for service', {
+          userId,
+          provider,
           service: serviceName,
-          toolCount: tools.length,
-          mcpServerId: mcpServer.id
+          toolCount: toolsFromMCP.length
         });
 
       } catch (error) {
-        logger.error('Failed to load tools for MCP', {
-          mcpServerId: config.mcpServerId,
+        logger.error('Failed to load tools for provider', {
+          userId,
+          provider,
           error: (error as Error).message
         });
       }
@@ -454,7 +472,7 @@ IMPORTANT:
   }
 
   /**
-   * Execute a single tool via MCP Process Manager
+   * Execute a single tool via MCPConnectionManagerV2
    */
   private async executeTool(
     userId: string,
@@ -473,31 +491,15 @@ IMPORTANT:
 
       const provider = providerMap[selectedTool.service] || selectedTool.service;
 
-      // Find MCP server for this provider
-      const mcpServer = await prisma.mCPServer.findFirst({
-        where: { provider }
-      });
-
-      if (!mcpServer) {
-        throw new Error(`No MCP server found for provider: ${provider}`);
+      // Check if MCP is connected
+      if (!mcpConnectionManagerV2.isConnected(userId, provider)) {
+        throw new Error(`MCP not connected for provider: ${provider}. Please connect the service first.`);
       }
 
-      // Check if MCP is running
-      if (!mcpProcessManager.isRunning(userId, mcpServer.id)) {
-        // Try to start it
-        logger.info('MCP not running, attempting to start', {
-          userId,
-          mcpServerId: mcpServer.id,
-          provider
-        });
-
-        await mcpProcessManager.startMCP(userId, mcpServer.id);
-      }
-
-      // Execute tool via MCP Process Manager
-      const result = await mcpProcessManager.executeTool(
+      // Execute tool via MCPConnectionManagerV2
+      const result = await mcpConnectionManagerV2.callTool(
         userId,
-        mcpServer.id,
+        provider,
         selectedTool.tool,
         selectedTool.params
       );
@@ -506,7 +508,7 @@ IMPORTANT:
         userId,
         service: selectedTool.service,
         tool: selectedTool.tool,
-        mcpServerId: mcpServer.id,
+        provider,
         executionTime: Date.now() - startTime
       });
 
@@ -556,3 +558,4 @@ IMPORTANT:
 
 // Singleton export
 export const llmMCPOrchestrator = new LLMMCPOrchestrator();
+

@@ -290,11 +290,13 @@ export class MCPConnectionManagerV2 {
       if (healthy) {
         connection.lastHealthCheck = new Date();
 
-        // Update database
+        // Update database - clear error on successful health check
         await this.updateMCPStatus(
           connection.userId,
           connection.provider,
-          'connected'
+          'connected',
+          0,
+          null // Clear error message
         );
 
         logger.debug('MCP health check passed', {
@@ -383,7 +385,7 @@ export class MCPConnectionManagerV2 {
     provider: string,
     status: string,
     toolsCount: number = 0,
-    error?: string,
+    error?: string | null,
     sessionId?: string | null,
     endpoint?: string,
     protocolVersion?: string

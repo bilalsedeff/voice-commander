@@ -144,8 +144,8 @@ router.get(
         userId
       });
 
-      // ⭐ Auto-connect MCP after successful OAuth
-      // Note: This runs asynchronously - don't block OAuth success
+      // ✅ Auto-connect embedded MCP (GoogleCalendarMCP, SlackMCP, etc.)
+      // Uses user's OAuth tokens - no external process needed
       mcpConnectionManagerV2.connectMCPServer(userId, provider)
         .then((result) => {
           if (result.success) {
@@ -226,7 +226,7 @@ router.delete(
         userId: req.user.userId
       });
 
-      // ⭐ Also disconnect MCP when OAuth is disconnected
+      // ✅ Disconnect embedded MCP
       try {
         await mcpConnectionManagerV2.disconnectMCPServer(req.user.userId, provider);
         logger.info('MCP disconnected after OAuth disconnect', {
