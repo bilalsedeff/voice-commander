@@ -8,6 +8,7 @@
 import { Router, Request, Response } from 'express';
 import { VoiceOrchestrator } from '../orchestrator/voice-orchestrator';
 import { llmMCPOrchestrator, OrchestrationResult } from '../services/llm-mcp-orchestrator';
+import { mcpConnectionManagerV2 } from '../services/mcp-connection-manager-v2';
 import { authenticateToken } from '../middleware/auth';
 import { PrismaClient } from '@prisma/client';
 import { CommandExecutionResult, ChainedCommandResult } from '../mcp/types';
@@ -319,8 +320,19 @@ router.post('/llm/stream', authenticateToken, async (req: Request, res: Response
       const result = await llmMCPOrchestrator.processQuery(userId, query, {
         streaming: true,
         onProgress: (update) => {
+          logger.debug('SSE: onProgress callback triggered', { update }); // DEBUG
           if (!connectionClosed) {
-            sendSSE('progress', update);
+            // Transform backend format to frontend format
+            const sseData = {
+              step: update.type, // 'analyzing', 'discovering', etc.
+              message: update.message,
+              timestamp: new Date(update.timestamp).toISOString(),
+              data: update.data
+            };
+            logger.debug('SSE: Sending progress event', { sseData }); // DEBUG
+            sendSSE('progress', sseData);
+          } else {
+            logger.warn('SSE: Connection closed, skipping progress update');
           }
         }
       });
@@ -511,6 +523,137 @@ function generateResponseMessage(result: CommandExecutionResult | ChainedCommand
 
   return '✅ Command executed successfully.';
 }
+
+/**
+ * POST /api/voice/mcp-init
+ * Initialize MCP connections for all OAuth-connected services
+ * Auto-starts MCP servers for services where OAuth is authorized but MCP is not running
+ */
+router.post('/mcp-init', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+
+    // Get OAuth-connected services
+    const connections = await prisma.serviceConnection.findMany({
+      where: {
+        userId,
+        connected: true // OAuth authorized
+      }
+    });
+
+    const initResults = [];
+
+    for (const connection of connections) {
+      try {
+        // Get MCP instance to check runtime status
+        const mcpInstance = mcpConnectionManagerV2.getMCPInstance(userId, connection.provider);
+
+        if (mcpInstance) {
+          // MCP already running - refresh tool count from runtime
+          logger.info('MCP already running, refreshing tool count', {
+            userId,
+            provider: connection.provider,
+            dbToolsCount: connection.mcpToolsCount
+          });
+
+          // Get fresh tool count from MCP
+          let tools: unknown[] = [];
+          if (typeof (mcpInstance as any).discoverTools === 'function') {
+            tools = await (mcpInstance as any).discoverTools();
+          }
+
+          const actualToolsCount = tools.length;
+
+          // Update database if tool count is stale
+          if (actualToolsCount !== connection.mcpToolsCount) {
+            logger.warn('Database tool count is stale, updating', {
+              userId,
+              provider: connection.provider,
+              dbToolsCount: connection.mcpToolsCount,
+              actualToolsCount
+            });
+
+            await prisma.serviceConnection.update({
+              where: {
+                userId_provider: { userId, provider: connection.provider }
+              },
+              data: {
+                mcpToolsCount: actualToolsCount,
+                mcpConnected: true,
+                mcpStatus: 'connected',
+                mcpLastHealthCheck: new Date()
+              }
+            });
+          }
+
+          initResults.push({
+            provider: connection.provider,
+            status: 'refreshed',
+            mcpConnected: true,
+            toolsCount: actualToolsCount
+          });
+          continue;
+        }
+
+        // MCP not running - start it
+        logger.info('Auto-starting MCP for OAuth-connected service', {
+          userId,
+          provider: connection.provider
+        });
+
+        const mcpResult = await mcpConnectionManagerV2.connectMCPServer(userId, connection.provider);
+
+        initResults.push({
+          provider: connection.provider,
+          status: mcpResult.success ? 'connected' : 'failed',
+          mcpConnected: mcpResult.success,
+          toolsCount: mcpResult.toolsCount || 0,
+          error: mcpResult.error
+        });
+
+        logger.info('MCP auto-start result', {
+          userId,
+          provider: connection.provider,
+          success: mcpResult.success,
+          toolsCount: mcpResult.toolsCount
+        });
+
+      } catch (error) {
+        logger.error('MCP auto-start failed', {
+          userId,
+          provider: connection.provider,
+          error: (error as Error).message
+        });
+
+        initResults.push({
+          provider: connection.provider,
+          status: 'error',
+          mcpConnected: false,
+          toolsCount: 0,
+          error: (error as Error).message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      initialized: initResults.length,
+      results: initResults
+    });
+
+  } catch (error) {
+    logger.error('MCP initialization failed', {
+      error: (error as Error).message,
+      stack: (error as Error).stack
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'MCP_INIT_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
 
 /**
  * GET /api/voice/mcp-status

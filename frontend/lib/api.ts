@@ -297,17 +297,28 @@ export const voice = {
       }
 
       // Read SSE stream
+      console.log('🔄 SSE: Starting to read stream...', {
+        hasBody: !!response.body,
+        status: response.status,
+        headers: Object.fromEntries(response.headers.entries())
+      }); // DEBUG
+
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
 
       if (!reader) {
+        console.error('❌ SSE: Response body is not readable');
         throw new Error('Response body is not readable');
       }
 
       let buffer = '';
 
+      console.log('✅ SSE: Reader ready, starting to read chunks...'); // DEBUG
+
       while (true) {
         const { done, value } = await reader.read();
+
+        console.log('📦 SSE: Chunk received', { done, bytesLength: value?.length }); // DEBUG
 
         if (done) {
           callbacks.onDone?.();
@@ -334,25 +345,36 @@ export const voice = {
             try {
               const data = JSON.parse(eventData);
 
+              console.log('📡 SSE Event:', eventType, data); // DEBUG
+
               switch (eventType) {
                 case 'progress':
+                  console.log('📊 Progress event received:', data); // DEBUG
                   callbacks.onProgress?.(data as { step: string; message: string; timestamp: string; data?: unknown });
                   break;
 
                 case 'result':
+                  console.log('✅ Result event received:', data); // DEBUG
                   callbacks.onResult?.(data);
                   break;
 
                 case 'error':
+                  console.log('❌ Error event received:', data); // DEBUG
                   callbacks.onError?.(data as { message: string; code?: string });
                   break;
 
                 case 'done':
+                  console.log('🏁 Done event received:', data); // DEBUG
+                  // Send done event data to onResult callback first (contains results array)
+                  if (data && typeof data === 'object') {
+                    callbacks.onResult?.(data);
+                  }
+                  // Then call onDone
                   callbacks.onDone?.();
                   break;
 
                 default:
-                  console.warn('Unknown SSE event type:', eventType);
+                  console.warn('Unknown SSE event type:', eventType, data);
               }
             } catch (parseError) {
               console.error('Failed to parse SSE event data:', eventData, parseError);
@@ -427,6 +449,31 @@ export const voice = {
 
     if (!response.ok) {
       throw new Error('Failed to get examples');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Initialize MCP connections for OAuth-connected services
+   */
+  async initMCPConnections(): Promise<{
+    success: boolean;
+    initialized: number;
+    results: Array<{
+      provider: string;
+      status: string;
+      mcpConnected: boolean;
+      toolsCount: number;
+      error?: string;
+    }>;
+  }> {
+    const response = await authenticatedFetch('/api/voice/mcp-init', {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to initialize MCP connections');
     }
 
     return response.json();

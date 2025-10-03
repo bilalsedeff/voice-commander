@@ -146,28 +146,28 @@ router.get(
 
       // ✅ Auto-connect embedded MCP (GoogleCalendarMCP, SlackMCP, etc.)
       // Uses user's OAuth tokens - no external process needed
-      mcpConnectionManagerV2.connectMCPServer(userId, provider)
-        .then((result) => {
-          if (result.success) {
-            logger.info('MCP auto-connected after OAuth', {
-              userId,
-              provider
-            });
-          } else {
-            logger.warn('MCP auto-connect failed after OAuth', {
-              userId,
-              provider,
-              error: result.error
-            });
-          }
-        })
-        .catch((error) => {
-          logger.error('MCP auto-connect error', {
+      try {
+        const mcpResult = await mcpConnectionManagerV2.connectMCPServer(userId, provider);
+        if (mcpResult.success) {
+          logger.info('MCP auto-connected after OAuth', {
             userId,
             provider,
-            error: (error as Error).message
+            toolsCount: mcpResult.toolsCount
           });
+        } else {
+          logger.warn('MCP auto-connect failed after OAuth', {
+            userId,
+            provider,
+            error: mcpResult.error
+          });
+        }
+      } catch (mcpError) {
+        logger.error('MCP auto-connect error', {
+          userId,
+          provider,
+          error: (mcpError as Error).message
         });
+      }
 
       // Redirect to frontend with success
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';

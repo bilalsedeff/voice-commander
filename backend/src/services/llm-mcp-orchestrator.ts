@@ -11,7 +11,6 @@
  * Replaces regex-based CommandMapper with intelligent LLM-driven mapping
  */
 
-import { mcpProcessManager } from './mcp-process-manager';
 import { mcpConnectionManagerV2 } from './mcp-connection-manager-v2';
 import { llmService, LLMTaskType } from './llm-service';
 import logger from '../utils/logger';
@@ -105,8 +104,16 @@ export class LLMMCPOrchestrator {
 
     const emitProgress = (update: ProgressUpdate) => {
       progressUpdates.push(update);
+      logger.debug('Orchestrator: emitProgress called', {
+        update,
+        hasCallback: !!options?.onProgress,
+        streaming: options?.streaming
+      }); // DEBUG
       if (options?.onProgress) {
+        logger.debug('Orchestrator: Calling onProgress callback'); // DEBUG
         options.onProgress(update);
+      } else {
+        logger.warn('Orchestrator: No onProgress callback available'); // DEBUG
       }
     };
 
@@ -269,25 +276,55 @@ export class LLMMCPOrchestrator {
 
     const toolRegistry: ToolRegistry = {};
 
-    // Get connected services from ServiceConnection table
+    // 🔧 FIX: Get OAuth-connected services (not MCP status)
+    // OAuth connection means we have tokens, MCP will be started on-demand
     const connections = await prisma.serviceConnection.findMany({
       where: {
         userId,
-        mcpConnected: true,
-        mcpStatus: 'connected'
+        connected: true  // ✅ Only check OAuth connection, not MCP status
       }
+    });
+
+    logger.debug('Found OAuth-connected services', {
+      userId,
+      providers: connections.map(c => c.provider)
     });
 
     for (const connection of connections) {
       const { provider } = connection;
 
       try {
-        // Get MCP instance
-        const mcpInstance = mcpConnectionManagerV2.getMCPInstance(userId, provider);
+        // 🔧 FIX: Check if MCP is running, if not start it
+        let mcpInstance = mcpConnectionManagerV2.getMCPInstance(userId, provider);
 
         if (!mcpInstance) {
-          logger.warn('MCP instance not found for provider', { userId, provider });
-          continue;
+          logger.info('MCP not running, starting it now', { userId, provider });
+
+          // Auto-start MCP for OAuth-connected service
+          const mcpResult = await mcpConnectionManagerV2.connectMCPServer(userId, provider);
+
+          if (!mcpResult.success) {
+            logger.error('Failed to start MCP', {
+              userId,
+              provider,
+              error: mcpResult.error
+            });
+            continue;
+          }
+
+          // Get the newly created instance
+          mcpInstance = mcpConnectionManagerV2.getMCPInstance(userId, provider);
+
+          if (!mcpInstance) {
+            logger.error('MCP started but instance not found', { userId, provider });
+            continue;
+          }
+
+          logger.info('MCP auto-started successfully', {
+            userId,
+            provider,
+            toolsCount: mcpResult.toolsCount
+          });
         }
 
         // Get tools from MCP instance
@@ -345,7 +382,8 @@ export class LLMMCPOrchestrator {
         logger.error('Failed to load tools for provider', {
           userId,
           provider,
-          error: (error as Error).message
+          error: (error as Error).message,
+          stack: (error as Error).stack
         });
       }
     }
@@ -512,11 +550,17 @@ IMPORTANT:
         executionTime: Date.now() - startTime
       });
 
+      // 🔧 FIX: Unwrap MCP result if it has nested {success, data} structure
+      // Most MCPs return {success: true, data: {...}} - we want just the inner data
+      const unwrappedData = (result && typeof result === 'object' && 'data' in result && 'success' in result)
+        ? (result as { success: boolean; data: unknown }).data
+        : result;
+
       return {
         success: true,
         service: selectedTool.service,
         tool: selectedTool.tool,
-        data: result,
+        data: unwrappedData,
         executionTime: Date.now() - startTime
       };
 

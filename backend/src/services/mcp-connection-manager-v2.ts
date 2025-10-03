@@ -65,7 +65,9 @@ export class MCPConnectionManagerV2 {
   async connectMCPServer(
     userId: string,
     provider: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<{
+    [x: string]: any; success: boolean; error?: string 
+}> {
     const connectionKey = `${userId}:${provider}`;
 
     try {

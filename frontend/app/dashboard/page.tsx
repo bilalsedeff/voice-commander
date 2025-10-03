@@ -107,6 +107,35 @@ function DashboardContent() {
             mcpError: connection?.mcpError || null,
           };
         }));
+
+        // 🆕 Auto-initialize MCP connections for OAuth-authorized services
+        // This ensures MCP starts even if user logged in via Google OAuth
+        try {
+          const mcpInitResult = await (await import('@/lib/api')).voice.initMCPConnections();
+
+          if (mcpInitResult.success && mcpInitResult.results.length > 0) {
+            console.log('MCP auto-init results:', mcpInitResult.results);
+
+            // Refresh connection status to show updated MCP info
+            const updatedConnections = await oauth.getConnections();
+            setServices(prev => prev.map(service => {
+              const provider = service.id === 'google_calendar' ? 'google' : service.id;
+              const connection = updatedConnections.find(c => c.provider === provider);
+              return connection ? {
+                ...service,
+                connected: connection.connected,
+                mcpConnected: connection.mcpConnected,
+                mcpStatus: connection.mcpStatus,
+                mcpToolsCount: connection.mcpToolsCount,
+                mcpError: connection.mcpError,
+              } : service;
+            }));
+          }
+        } catch (mcpInitError) {
+          console.warn('MCP auto-init failed (non-critical):', mcpInitError);
+          // Don't block dashboard load if MCP init fails
+        }
+
       } catch (error) {
         console.error('Failed to initialize dashboard:', error);
         // If error is 401/403, user will be redirected to login by API client
@@ -193,6 +222,32 @@ function DashboardContent() {
         s.id === serviceId ? { ...s, connected: false } : s
       )
     );
+  };
+
+  const handleServiceRefresh = async (serviceId: string) => {
+    try {
+      // Fetch latest connection status from backend
+      const connections = await oauth.getConnections();
+
+      // Update only the refreshed service
+      setServices(prev => prev.map(service => {
+        if (service.id !== serviceId) return service;
+
+        const provider = service.id === 'google_calendar' ? 'google' : service.id;
+        const connection = connections.find(c => c.provider === provider);
+
+        return connection ? {
+          ...service,
+          connected: connection.connected,
+          mcpConnected: connection.mcpConnected || false,
+          mcpStatus: connection.mcpStatus || 'disconnected',
+          mcpToolsCount: connection.mcpToolsCount || 0,
+          mcpError: connection.mcpError || null,
+        } : service;
+      }));
+    } catch (error) {
+      console.error('Failed to refresh service status:', error);
+    }
   };
 
   const handleCommandExecuted = (command: string, result: any) => {
@@ -406,6 +461,7 @@ function DashboardContent() {
                 service={service}
                 onConnect={handleServiceConnect}
                 onDisconnect={handleServiceDisconnect}
+                onRefresh={handleServiceRefresh}
               />
             ))}
           </div>

@@ -395,9 +395,55 @@ export class GoogleCalendarMCP {
     }
 
     if (oauthToken.expiresAt && oauthToken.expiresAt < new Date()) {
-      // Token expired, need to refresh
-      // TODO: Implement token refresh logic
-      throw new Error('OAuth token expired. Please reconnect your Google account.');
+      // Token expired - refresh it
+      if (!oauthToken.refreshToken) {
+        throw new Error('OAuth token expired and no refresh token available. Please reconnect your Google account.');
+      }
+
+      logger.info('Refreshing expired OAuth token', { userId, provider: 'google' });
+
+      try {
+        const auth = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET
+        );
+
+        auth.setCredentials({
+          refresh_token: decryptToken(oauthToken.refreshToken)
+        });
+
+        // Refresh the token
+        const { credentials } = await auth.refreshAccessToken();
+
+        if (!credentials.access_token) {
+          throw new Error('Failed to refresh access token');
+        }
+
+        // Update database with new token
+        const { encryptToken } = await import('../utils/encryption');
+        await prisma.oAuthToken.update({
+          where: { id: oauthToken.id },
+          data: {
+            accessToken: encryptToken(credentials.access_token),
+            expiresAt: credentials.expiry_date ? new Date(credentials.expiry_date) : null,
+            updatedAt: new Date()
+          }
+        });
+
+        logger.info('OAuth token refreshed successfully', { userId, provider: 'google' });
+
+        return {
+          access_token: credentials.access_token,
+          refresh_token: decryptToken(oauthToken.refreshToken)
+        };
+      } catch (refreshError) {
+        logger.error('Failed to refresh OAuth token', {
+          userId,
+          provider: 'google',
+          error: (refreshError as Error).message
+        });
+        throw new Error('Failed to refresh OAuth token. Please reconnect your Google account.');
+      }
     }
 
     return {

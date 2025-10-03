@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Loader2, Volume2, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Loader2, Volume2, AlertCircle, CheckCircle } from 'lucide-react';
 import { SpeechAPI } from '@/lib/speech-api';
 import { voice } from '@/lib/api';
 
@@ -78,11 +78,13 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
       setIsListening(false);
       setInterimTranscript('');
     } else {
-      // Start listening
+      // Start listening - clear previous session data
       setTranscript('');
       setInterimTranscript('');
       setResponse('');
       setError('');
+      setProgressUpdates([]); // Clear previous progress history
+      setCurrentStep('');
 
       speechAPI.startListening({
         onTranscript: async (finalTranscript) => {
@@ -90,6 +92,13 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
           setTranscript(finalTranscript);
           setInterimTranscript('');
           setIsListening(false);
+
+          // 🔧 FIX: Explicitly stop speech recognition before processing
+          speechAPI.stopListening();
+
+          // Wait for audio subsystem to fully release
+          await new Promise(resolve => setTimeout(resolve, 300));
+
           setIsProcessing(true);
           setProgressUpdates([]); // Clear previous progress
           setCurrentStep('Starting...');
@@ -110,14 +119,43 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
                 console.log('✅ Result:', result);
                 finalResult = result;
 
-                // Extract message from result
-                if (result && typeof result === 'object' && 'message' in result) {
-                  finalMessage = String(result.message);
-                } else if (result && typeof result === 'object' && 'data' in result) {
-                  const data = result.data as { message?: string };
-                  finalMessage = data?.message || 'Command executed successfully';
-                } else {
-                  finalMessage = 'Command executed successfully';
+                // Extract message from SSE 'done' event result
+                if (result && typeof result === 'object') {
+                  const resultData = result as {
+                    success?: boolean;
+                    results?: Array<{ success: boolean; tool: string; data?: { count?: number; events?: unknown[] } }>;
+                    message?: string;
+                  };
+
+                  // If results array exists (from LLM orchestrator)
+                  if (resultData.results && Array.isArray(resultData.results) && resultData.results.length > 0) {
+                    const firstResult = resultData.results[0];
+
+                    if (firstResult.success && firstResult.data) {
+                      // Google Calendar list_events result
+                      if ('count' in firstResult.data) {
+                        const count = firstResult.data.count as number;
+                        finalMessage = count > 0
+                          ? `📅 Found ${count} upcoming event${count > 1 ? 's' : ''}`
+                          : '📅 No upcoming meetings found';
+                      } else if ('events' in firstResult.data && Array.isArray(firstResult.data.events)) {
+                        const events = firstResult.data.events;
+                        finalMessage = events.length > 0
+                          ? `📅 Found ${events.length} upcoming event${events.length > 1 ? 's' : ''}`
+                          : '📅 No upcoming meetings found';
+                      } else {
+                        finalMessage = '✅ Command executed successfully';
+                      }
+                    } else {
+                      finalMessage = firstResult.success
+                        ? '✅ Command executed successfully'
+                        : `❌ ${firstResult.tool} failed`;
+                    }
+                  } else if (resultData.message) {
+                    finalMessage = resultData.message;
+                  } else {
+                    finalMessage = resultData.success ? '✅ Command executed successfully' : '❌ Command failed';
+                  }
                 }
 
                 setResponse(finalMessage);
@@ -131,13 +169,15 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
                 setResponse(errorMsg);
                 setCurrentStep('Error');
 
-                // Speak error in English
-                setIsSpeaking(true);
-                speechAPI.speak(`Error: ${errorMsg}`, {
-                  lang: 'en-US',
-                  onEnd: () => setIsSpeaking(false),
-                  onError: () => setIsSpeaking(false),
-                }).catch(console.error);
+                // Try to speak error (optional)
+                if (speechAPI) {
+                  setIsSpeaking(true);
+                  speechAPI.speak(`Error: ${errorMsg}`, {
+                    lang: 'en-US',
+                    onEnd: () => setIsSpeaking(false),
+                    onError: () => setIsSpeaking(false),
+                  }).catch(() => setIsSpeaking(false)); // Silently fail
+                }
               },
 
               onDone: async () => {
@@ -150,14 +190,43 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
                   onCommandExecuted?.(finalTranscript, finalResult);
                 }
 
-                // Speak response in English
-                if (finalMessage && !error) {
-                  setIsSpeaking(true);
-                  await speechAPI.speak(finalMessage, {
-                    lang: 'en-US',
-                    onEnd: () => setIsSpeaking(false),
-                    onError: () => setIsSpeaking(false),
-                  }).catch(console.error);
+                // Speak response in English (optional - may fail due to browser audio conflicts)
+                if (finalMessage && !error && speechAPI) {
+                  try {
+                    // Wait for audio subsystem to fully release (300ms minimum)
+                    await new Promise(resolve => setTimeout(resolve, 300));
+
+                    setIsSpeaking(true);
+
+                    // Use timeout to prevent hanging
+                    const ttsTimeout = setTimeout(() => {
+                      setIsSpeaking(false);
+                      console.warn('TTS timeout - skipping audio playback');
+                    }, 5000);
+
+                    await speechAPI.speak(finalMessage, {
+                      lang: 'en-US',
+                      onEnd: () => {
+                        clearTimeout(ttsTimeout);
+                        setIsSpeaking(false);
+                      },
+                      onError: (err) => {
+                        clearTimeout(ttsTimeout);
+                        setIsSpeaking(false);
+                        // Silently fail - TTS is non-critical
+                        console.debug('TTS unavailable (expected after voice input):', err);
+                      },
+                    }).catch(err => {
+                      clearTimeout(ttsTimeout);
+                      setIsSpeaking(false);
+                      // Don't log as error - this is expected behavior
+                      console.debug('TTS skipped:', err.message);
+                    });
+                  } catch (ttsError) {
+                    setIsSpeaking(false);
+                    // TTS failure is not critical - user already sees text response
+                    console.debug('TTS unavailable, displaying text only');
+                  }
                 }
               }
             });
@@ -299,12 +368,21 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
         </div>
       )}
 
-      {/* Real-time Progress Display */}
-      {isProcessing && currentStep && (
+      {/* Real-time Progress Display - Show if processing OR has progress history */}
+      {(isProcessing || progressUpdates.length > 0) && (
         <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-6 rounded-xl shadow-md mb-4 border border-indigo-200">
           <div className="flex items-center gap-3 mb-4">
-            <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
-            <h3 className="text-sm font-semibold text-indigo-900">Processing...</h3>
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                <h3 className="text-sm font-semibold text-indigo-900">Processing...</h3>
+              </>
+            ) : (
+              <>
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <h3 className="text-sm font-semibold text-green-900">Execution Flow:</h3>
+              </>
+            )}
           </div>
           <div className="space-y-3">
             {progressUpdates.map((update, idx) => (

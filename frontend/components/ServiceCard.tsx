@@ -1,7 +1,7 @@
 'use client';
 
-import { Calendar, MessageSquare, FileText, Github, CheckCircle, XCircle, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { Calendar, MessageSquare, FileText, Github, CheckCircle, XCircle, Loader2, RefreshCw, AlertCircle, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { oauth } from '@/lib/api';
 
 interface ServiceCardProps {
@@ -19,6 +19,7 @@ interface ServiceCardProps {
   };
   onConnect?: (serviceId: string) => void;
   onDisconnect?: (serviceId: string) => void;
+  onRefresh?: (serviceId: string) => void;
 }
 
 const iconMap = {
@@ -36,10 +37,57 @@ const serviceToProviderMap: Record<string, string> = {
   'github': 'github',
 };
 
-export default function ServiceCard({ service, onConnect, onDisconnect }: ServiceCardProps) {
+// Parse error messages into user-friendly format
+function parseErrorMessage(error: string | null): {
+  type: 'transient' | 'auth_expired' | 'unknown' | null;
+  title: string;
+  message: string;
+  action?: string;
+} | null {
+  if (!error) return null;
+
+  if (error.includes('API has not been used') || error.includes('disabled')) {
+    return {
+      type: 'transient',
+      title: 'Setup in progress',
+      message: 'Google Calendar API is activating (2-3 minutes)',
+      action: 'This page will auto-refresh when ready'
+    };
+  }
+
+  if (error.includes('invalid_grant') || error.includes('expired')) {
+    return {
+      type: 'auth_expired',
+      title: 'Authorization expired',
+      message: 'Please reconnect your Google account',
+      action: 'Click Disconnect, then Connect again'
+    };
+  }
+
+  if (error.includes('Session not found')) {
+    return {
+      type: 'transient',
+      title: 'Reconnecting...',
+      message: 'MCP session is being restored',
+      action: 'This will resolve automatically'
+    };
+  }
+
+  return {
+    type: 'unknown',
+    title: 'Connection issue',
+    message: error.length > 100 ? 'Something went wrong' : error,
+    action: 'Try refreshing the connection'
+  };
+}
+
+export default function ServiceCard({ service, onConnect, onDisconnect, onRefresh }: ServiceCardProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const Icon = iconMap[service.icon];
+
+  const parsedError = parseErrorMessage(service.mcpError);
 
   const handleConnect = async () => {
     setIsLoading(true);
@@ -67,12 +115,45 @@ export default function ServiceCard({ service, onConnect, onDisconnect }: Servic
     }
   };
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefresh?.(service.id);
+    } finally {
+      // Delay to show feedback
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
+
+  // Auto-refresh for transient errors (every 30 seconds)
+  useEffect(() => {
+    if (parsedError?.type === 'transient' && onRefresh) {
+      const interval = setInterval(() => {
+        handleRefresh();
+      }, 30000); // 30 seconds
+
+      return () => clearInterval(interval);
+    }
+  }, [parsedError?.type, onRefresh]);
+
   return (
     <div className="bg-white rounded-xl shadow-md hover:shadow-lg transition-all border border-gray-200 overflow-hidden">
       {/* Header */}
       <div className={`${service.color} p-6`}>
         <div className="flex items-center justify-between">
-          <Icon className="w-12 h-12 text-white" />
+          <div className="flex items-center gap-3">
+            <Icon className="w-12 h-12 text-white" />
+            {service.connected && onRefresh && (
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="p-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors disabled:opacity-50"
+                title="Refresh connection status"
+              >
+                <RefreshCw className={`w-4 h-4 text-white ${isRefreshing ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+          </div>
           {service.connected ? (
             <CheckCircle className="w-6 h-6 text-white" />
           ) : (
@@ -136,10 +217,47 @@ export default function ServiceCard({ service, onConnect, onDisconnect }: Servic
             </div>
           )}
 
-          {/* MCP Error Display */}
-          {service.mcpError && (
-            <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
-              ⚠️ {service.mcpError}
+          {/* MCP Error Display - User Friendly */}
+          {parsedError && (
+            <div className={`mt-2 p-3 rounded-lg border ${
+              parsedError.type === 'transient'
+                ? 'bg-blue-50 border-blue-200'
+                : parsedError.type === 'auth_expired'
+                ? 'bg-orange-50 border-orange-200'
+                : 'bg-yellow-50 border-yellow-200'
+            }`}>
+              <div className="flex items-start gap-2">
+                {parsedError.type === 'transient' ? (
+                  <Clock className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5 flex-shrink-0" />
+                )}
+                <div className="flex-1">
+                  <p className={`text-xs font-semibold mb-1 ${
+                    parsedError.type === 'transient'
+                      ? 'text-blue-800'
+                      : 'text-orange-800'
+                  }`}>
+                    {parsedError.title}
+                  </p>
+                  <p className={`text-xs ${
+                    parsedError.type === 'transient'
+                      ? 'text-blue-700'
+                      : 'text-orange-700'
+                  }`}>
+                    {parsedError.message}
+                  </p>
+                  {parsedError.action && (
+                    <p className={`text-xs mt-1 italic ${
+                      parsedError.type === 'transient'
+                        ? 'text-blue-600'
+                        : 'text-orange-600'
+                    }`}>
+                      → {parsedError.action}
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </div>

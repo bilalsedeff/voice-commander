@@ -100,6 +100,7 @@ TESTING-CHECKLIST.md
 TESTING-SUMMARY.md
 WINDOWS-NPX-FIX.md
 RESTART-CLEAN.md
+PRODUCTION-ONBOARDING-PLAN.md
 
 #voice-commander-web-mvp.md
 
@@ -116,3 +117,6 @@ nul
 
 */**/__tests__/
 */__tests__/
+**/*/__tests__/
+__tests__/
+**/__tests__/

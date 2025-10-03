@@ -216,10 +216,16 @@ export class SpeechAPI {
       };
 
       utterance.onerror = (event) => {
-        console.error('❌ Speech synthesis error:', event);
-        const errorMsg = `Speech synthesis error: ${event.error}`;
-        options?.onError?.(errorMsg);
-        reject(new Error(errorMsg));
+        // TTS errors are non-critical (expected after voice input due to browser audio conflicts)
+        if (event.error === 'interrupted' || event.error === 'canceled') {
+          console.debug('TTS skipped (expected):', event.error);
+          resolve(); // Resolve instead of reject
+        } else {
+          console.warn('TTS error:', event.error);
+          const errorMsg = `Speech synthesis error: ${event.error}`;
+          options?.onError?.(errorMsg);
+          reject(new Error(errorMsg));
+        }
       };
 
       this.synthesis.speak(utterance);
