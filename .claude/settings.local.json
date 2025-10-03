@@ -50,7 +50,8 @@
       "Bash(PORT=3005 npm run dev)",
       "Bash(tree:*)",
       "Bash(awk:*)",
-      "Bash(if exist .next rmdir /s /q .next)"
+      "Bash(if exist .next rmdir /s /q .next)",
+      "Read(//c//**)"
     ],
     "deny": [],
     "ask": []

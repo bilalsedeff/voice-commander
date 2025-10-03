@@ -367,9 +367,10 @@ export const voice = {
                   console.log('🏁 Done event received:', data); // DEBUG
                   // Send done event data to onResult callback first (contains results array)
                   if (data && typeof data === 'object') {
-                    callbacks.onResult?.(data);
+                    // Wait for onResult to complete (it's async and generates TTS)
+                    await callbacks.onResult?.(data);
                   }
-                  // Then call onDone
+                  // Then call onDone (after TTS message is ready)
                   callbacks.onDone?.();
                   break;
 
@@ -477,6 +478,45 @@ export const voice = {
     }
 
     return response.json();
+  },
+
+  /**
+   * Generate natural conversational TTS response from tool results
+   */
+  async generateNaturalResponse(
+    query: string,
+    toolResults: Array<{
+      success: boolean;
+      tool: string;
+      service: string;
+      data?: unknown;
+      error?: string;
+    }>,
+    options?: {
+      conversationContext?: string;
+      keepShort?: boolean;
+      askFollowUp?: boolean;
+    }
+  ): Promise<string> {
+    const response = await authenticatedFetch('/api/voice/generate-response', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        toolResults,
+        ...options
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to generate natural response');
+    }
+
+    const data = await response.json();
+    return data.spokenResponse;
   },
 
   /**

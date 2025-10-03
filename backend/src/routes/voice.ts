@@ -9,6 +9,7 @@ import { Router, Request, Response } from 'express';
 import { VoiceOrchestrator } from '../orchestrator/voice-orchestrator';
 import { llmMCPOrchestrator, OrchestrationResult } from '../services/llm-mcp-orchestrator';
 import { mcpConnectionManagerV2 } from '../services/mcp-connection-manager-v2';
+import { naturalResponseGenerator } from '../services/natural-response-generator';
 import { authenticateToken } from '../middleware/auth';
 import { PrismaClient } from '@prisma/client';
 import { CommandExecutionResult, ChainedCommandResult } from '../mcp/types';
@@ -717,6 +718,80 @@ router.get('/mcp-status', authenticateToken, async (req: Request, res: Response)
     res.status(500).json({
       success: false,
       error: 'MCP_STATUS_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
+
+/**
+ * POST /api/voice/generate-response
+ * Generate natural conversational TTS response from tool results
+ */
+router.post('/generate-response', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { query, toolResults, conversationContext, keepShort, askFollowUp } = req.body;
+    const userId = req.user!.userId;
+
+    // Validation
+    if (!query || typeof query !== 'string') {
+      res.status(400).json({
+        success: false,
+        error: 'INVALID_QUERY',
+        message: 'Query is required and must be a string'
+      });
+      return;
+    }
+
+    if (!toolResults || !Array.isArray(toolResults)) {
+      res.status(400).json({
+        success: false,
+        error: 'INVALID_TOOL_RESULTS',
+        message: 'toolResults must be an array'
+      });
+      return;
+    }
+
+    logger.info('Generating natural TTS response', {
+      userId,
+      query,
+      resultCount: toolResults.length,
+      hasContext: !!conversationContext
+    });
+
+    // Generate natural response
+    const spokenResponse = await naturalResponseGenerator.generateTTSResponse(
+      query,
+      toolResults,
+      {
+        conversationContext,
+        keepShort: keepShort === true,
+        askFollowUp: askFollowUp !== false // Default true
+      }
+    );
+
+    logger.info('Natural TTS response created', {
+      userId,
+      responseLength: spokenResponse.length
+    });
+
+    res.json({
+      success: true,
+      spokenResponse,
+      metadata: {
+        query,
+        resultCount: toolResults.length
+      }
+    });
+
+  } catch (error) {
+    logger.error('Failed to generate natural response', {
+      error: (error as Error).message,
+      stack: (error as Error).stack
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'RESPONSE_GENERATION_ERROR',
       message: (error as Error).message
     });
   }

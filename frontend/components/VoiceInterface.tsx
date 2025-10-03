@@ -115,50 +115,67 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
                 setCurrentStep(update.message);
               },
 
-              onResult: (result) => {
+              onResult: async (result) => {
                 console.log('✅ Result:', result);
                 finalResult = result;
 
-                // Extract message from SSE 'done' event result
+                // Extract display message and prepare for natural TTS
+                let displayMessage = '';
+                let ttsMessage = '';
+
                 if (result && typeof result === 'object') {
                   const resultData = result as {
                     success?: boolean;
-                    results?: Array<{ success: boolean; tool: string; data?: { count?: number; events?: unknown[] } }>;
+                    results?: Array<{ success: boolean; tool: string; service: string; data?: unknown; error?: string }>;
                     message?: string;
                   };
 
                   // If results array exists (from LLM orchestrator)
                   if (resultData.results && Array.isArray(resultData.results) && resultData.results.length > 0) {
-                    const firstResult = resultData.results[0];
-
-                    if (firstResult.success && firstResult.data) {
-                      // Google Calendar list_events result
-                      if ('count' in firstResult.data) {
-                        const count = firstResult.data.count as number;
-                        finalMessage = count > 0
-                          ? `📅 Found ${count} upcoming event${count > 1 ? 's' : ''}`
-                          : '📅 No upcoming meetings found';
-                      } else if ('events' in firstResult.data && Array.isArray(firstResult.data.events)) {
-                        const events = firstResult.data.events;
-                        finalMessage = events.length > 0
-                          ? `📅 Found ${events.length} upcoming event${events.length > 1 ? 's' : ''}`
-                          : '📅 No upcoming meetings found';
+                    // Generate natural TTS response via LLM
+                    try {
+                      console.log('🤖 Generating natural TTS response...');
+                      ttsMessage = await voice.generateNaturalResponse(
+                        finalTranscript,
+                        resultData.results,
+                        { keepShort: false, askFollowUp: true }
+                      );
+                      console.log('✅ Natural TTS response:', ttsMessage);
+                    } catch (error) {
+                      console.warn('Failed to generate natural response, using fallback', error);
+                      // Fallback to template-based response
+                      const firstResult = resultData.results[0];
+                      if (firstResult.success && firstResult.data && 'count' in (firstResult.data as Record<string, unknown>)) {
+                        const count = (firstResult.data as { count: number }).count;
+                        ttsMessage = count > 0
+                          ? `Found ${count} upcoming event${count > 1 ? 's' : ''}`
+                          : 'No upcoming meetings found';
                       } else {
-                        finalMessage = '✅ Command executed successfully';
+                        ttsMessage = firstResult.success ? 'Done' : 'Command failed';
                       }
+                    }
+
+                    // Display message (shorter for UI)
+                    const firstResult = resultData.results[0];
+                    if (firstResult.success && firstResult.data && 'count' in (firstResult.data as Record<string, unknown>)) {
+                      const count = (firstResult.data as { count: number }).count;
+                      displayMessage = count > 0
+                        ? `📅 Found ${count} upcoming event${count > 1 ? 's' : ''}`
+                        : '📅 No upcoming meetings found';
                     } else {
-                      finalMessage = firstResult.success
-                        ? '✅ Command executed successfully'
-                        : `❌ ${firstResult.tool} failed`;
+                      displayMessage = firstResult.success ? '✅ Command executed successfully' : `❌ ${firstResult.tool} failed`;
                     }
                   } else if (resultData.message) {
-                    finalMessage = resultData.message;
+                    displayMessage = resultData.message;
+                    ttsMessage = resultData.message;
                   } else {
-                    finalMessage = resultData.success ? '✅ Command executed successfully' : '❌ Command failed';
+                    displayMessage = resultData.success ? '✅ Command executed successfully' : '❌ Command failed';
+                    ttsMessage = resultData.success ? 'Done' : 'Command failed';
                   }
                 }
 
-                setResponse(finalMessage);
+                finalMessage = ttsMessage || displayMessage; // TTS uses natural message
+                setResponse(displayMessage); // UI shows concise message
                 setCurrentStep('Completed');
               },
 
@@ -191,8 +208,10 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
                 }
 
                 // Speak response in English (optional - may fail due to browser audio conflicts)
+                console.log('🔊 TTS Check:', { finalMessage, error, hasSpeechAPI: !!speechAPI }); // DEBUG
                 if (finalMessage && !error && speechAPI) {
                   try {
+                    console.log('🎤 Speaking TTS:', finalMessage); // DEBUG
                     // Wait for audio subsystem to fully release (300ms minimum)
                     await new Promise(resolve => setTimeout(resolve, 300));
 
