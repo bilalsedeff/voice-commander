@@ -92,14 +92,18 @@ export class SpeechAPI {
     };
 
     this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error('❌ Speech recognition error:', event.error);
       this.isListening = false;
+
+      // Ignore "no-speech" errors - this is normal when user doesn't speak
+      if (event.error === 'no-speech') {
+        console.debug('No speech detected - ignoring error');
+        return;
+      }
+
+      console.error('❌ Speech recognition error:', event.error);
 
       let errorMessage = 'Speech recognition error';
       switch (event.error) {
-        case 'no-speech':
-          errorMessage = 'No speech detected. Please try again.';
-          break;
         case 'audio-capture':
           errorMessage = 'Microphone not found or permission denied.';
           break;

@@ -99,21 +99,56 @@ model VoiceSession {
   endedAt      DateTime?
   isActive     Boolean   @default(true)
 
+  // Session mode and status
+  mode   String @default("continuous") // "continuous" | "push_to_talk"
+  status String @default("active") // "active" | "completed" | "timeout"
+
   // Short-term memory (last 10 interactions)
   contextSummary String? // LLM-generated summary of conversation
 
   // Session stats
   commandCount Int @default(0)
   successCount Int @default(0)
+  totalTurns   Int @default(0)
 
   // Relations
-  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  commands VoiceCommand[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commands          VoiceCommand[]
+  conversationTurns ConversationTurn[]
 
   @@index([userId])
   @@index([isActive])
+  @@index([status])
   @@index([lastActivity])
   @@map("voice_sessions")
+}
+
+// Conversation turns for short-term memory
+model ConversationTurn {
+  id        String @id @default(uuid())
+  sessionId String
+
+  // Turn metadata
+  turnNumber Int
+  userQuery  String @db.Text
+
+  // AI understanding
+  userIntent         String? @db.Text
+  assistantResponse  String  @db.Text
+  toolResults        Json? // Array of tool execution results
+
+  // Performance metrics
+  ttsSpoken  Boolean @default(false)
+  durationMs Int?
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  session VoiceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, turnNumber])
+  @@map("conversation_turns")
 }
 
 // User sessions for JWT token management

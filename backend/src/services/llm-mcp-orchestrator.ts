@@ -15,6 +15,7 @@ import { mcpConnectionManagerV2 } from './mcp-connection-manager-v2';
 import { llmService, LLMTaskType } from './llm-service';
 import logger from '../utils/logger';
 import prisma from '../config/database';
+import { conversationSessionManager } from './conversation-session-manager';
 
 // ==================== Type Definitions ====================
 
@@ -97,6 +98,7 @@ export class LLMMCPOrchestrator {
     options?: {
       streaming?: boolean;
       onProgress?: (update: ProgressUpdate) => void;
+      sessionId?: string; // ADD: Session ID for conversation context
     }
   ): Promise<OrchestrationResult> {
     const startTime = Date.now();
@@ -125,7 +127,53 @@ export class LLMMCPOrchestrator {
         timestamp: Date.now()
       });
 
-      logger.info('LLM-MCP Orchestrator: Processing query', { userId, query });
+      logger.info('LLM-MCP Orchestrator: Processing query', {
+        userId,
+        query,
+        hasSession: !!options?.sessionId
+      });
+
+      // Get conversation context if session provided
+      let conversationContext = '';
+      if (options?.sessionId) {
+        conversationContext = await conversationSessionManager.getContext(options.sessionId);
+        logger.debug('Retrieved conversation context', {
+          sessionId: options.sessionId,
+          contextLength: conversationContext.length
+        });
+      }
+
+      // Step 1.5: Quick Intent Classification (skip tools for simple queries)
+      const requiresTools = await this.quickIntentCheck(query, conversationContext);
+
+      if (!requiresTools) {
+        // Simple conversational query - no tools needed
+        logger.info('Query does not require tools - conversational response', { query });
+
+        // Generate conversational response
+        const { naturalResponseGenerator } = await import('./natural-response-generator');
+        const conversationalResponse = await naturalResponseGenerator.generateConversationalResponse(
+          query,
+          conversationContext
+        );
+
+        return {
+          success: true,
+          results: [{
+            success: true,
+            service: 'conversational',
+            tool: 'chat',
+            data: {
+              query,
+              response: conversationalResponse,
+              type: 'conversational'
+            },
+            executionTime: Date.now() - startTime
+          }],
+          totalExecutionTime: Date.now() - startTime,
+          progressUpdates
+        };
+      }
 
       // Step 2: Discover Available Tools
       emitProgress({
@@ -163,7 +211,7 @@ export class LLMMCPOrchestrator {
         timestamp: Date.now()
       });
 
-      const executionPlan = await this.selectTools(query, toolRegistry);
+      const executionPlan = await this.selectTools(query, toolRegistry, conversationContext);
 
       if (executionPlan.needsClarification) {
         return {
@@ -408,9 +456,10 @@ export class LLMMCPOrchestrator {
    */
   private async selectTools(
     query: string,
-    toolRegistry: ToolRegistry
+    toolRegistry: ToolRegistry,
+    conversationContext?: string
   ): Promise<ExecutionPlan> {
-    const systemPrompt = this.buildSystemPrompt(toolRegistry);
+    const systemPrompt = this.buildSystemPrompt(toolRegistry, conversationContext);
     const userPrompt = `User Query: "${query}"\n\nAnalyze this query and select appropriate tools to execute.`;
 
     logger.info('Sending tool selection request to LLM', {
@@ -462,17 +511,26 @@ export class LLMMCPOrchestrator {
   /**
    * Build system prompt for LLM with available tools
    */
-  private buildSystemPrompt(toolRegistry: ToolRegistry): string {
+  private buildSystemPrompt(toolRegistry: ToolRegistry, conversationContext?: string): string {
     const toolsJSON = JSON.stringify(toolRegistry, null, 2);
 
-    return `You are an intelligent MCP tool orchestrator. Your job is to:
+    let prompt = `You are an intelligent MCP tool orchestrator. Your job is to:
 1. Understand user intent from natural language queries
 2. Select the most appropriate MCP tools to fulfill the request
 3. Extract parameters from the query
 4. Build a sequential execution plan
-5. Output structured JSON
+5. Output structured JSON`;
 
-Available MCP Tools:
+    // Add conversation context if available
+    if (conversationContext) {
+      prompt += `\n\n**Previous Conversation Context:**
+${conversationContext}
+
+Use this context to understand follow-up questions like "yes", "no", "tell me more", "the first one", "add them", etc.
+The current query may reference information from previous turns.`;
+    }
+
+    prompt += `\n\nAvailable MCP Tools:
 ${toolsJSON}
 
 Rules:
@@ -507,6 +565,63 @@ IMPORTANT:
 - If you need clarification, set needsClarification=true and provide a specific question
 - Always include confidence score
 - Be precise with parameter extraction`;
+
+    return prompt;
+  }
+
+  /**
+   * Quick intent classification - determines if query requires tools or is conversational
+   */
+  private async quickIntentCheck(query: string, conversationContext?: string): Promise<boolean> {
+    // Fast pattern matching for common conversational queries
+    const conversationalPatterns = [
+      /^(hi|hello|hey|greetings|good morning|good afternoon|good evening)/i,
+      /^(how are you|what's up|sup)/i,
+      /^(thanks|thank you|thx)/i,
+      /^(bye|goodbye|see you|cya)/i,
+      /^(yes|no|okay|ok|sure|alright)/i,
+      /^(tell me more|explain|what|why|how)/i
+    ];
+
+    // Check if query matches conversational patterns
+    const isConversational = conversationalPatterns.some(pattern => pattern.test(query.trim()));
+
+    if (isConversational && !conversationContext) {
+      // Simple greeting/chat without context - no tools needed
+      return false;
+    }
+
+    // For follow-ups with context, use LLM to check if tools are needed
+    if (conversationContext) {
+      const systemPrompt = `You are an intent classifier. Determine if the user query requires using external tools (calendar, email, etc.) or is just conversational.
+
+Previous conversation:
+${conversationContext}
+
+Current query: "${query}"
+
+Respond with JSON: { "requiresTools": true/false, "reasoning": "..." }`;
+
+      try {
+        const response = await llmService.execute({
+          systemPrompt,
+          userPrompt: query,
+          taskType: LLMTaskType.FAST,
+          requiresJSON: true
+        });
+
+        const result = JSON.parse(response.content);
+        logger.debug('Intent classification result', { query, requiresTools: result.requiresTools, reasoning: result.reasoning });
+
+        return result.requiresTools;
+      } catch (error) {
+        logger.error('Intent classification failed, defaulting to requiring tools', { error: (error as Error).message });
+        return true; // Default to requiring tools if classification fails
+      }
+    }
+
+    // Default: query requires tools
+    return true;
   }
 
   /**

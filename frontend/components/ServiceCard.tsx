@@ -87,7 +87,7 @@ export default function ServiceCard({ service, onConnect, onDisconnect, onRefres
   const [error, setError] = useState<string | null>(null);
   const Icon = iconMap[service.icon];
 
-  const parsedError = parseErrorMessage(service.mcpError);
+  const parsedError = parseErrorMessage(service.mcpError || null);
 
   const handleConnect = async () => {
     setIsLoading(true);

@@ -262,7 +262,8 @@ export const voice = {
       onResult?: (result: unknown) => void;
       onError?: (error: { message: string; code?: string }) => void;
       onDone?: () => void;
-    }
+    },
+    sessionId?: string
   ): Promise<void> {
     const token = getToken();
     if (!token) {
@@ -279,7 +280,10 @@ export const voice = {
           'Authorization': `Bearer ${token}`,
           'Accept': 'text/event-stream',
         },
-        body: JSON.stringify({ query: command }),
+        body: JSON.stringify({
+          query: command,
+          ...(sessionId && { sessionId }) // Include sessionId if provided
+        }),
       });
 
       if (!response.ok) {
@@ -547,6 +551,83 @@ export const voice = {
 
     if (!response.ok) {
       throw new Error('Failed to get MCP status');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Start a new conversation session or resume existing one
+   */
+  async startSession(mode: 'continuous' | 'push_to_talk' = 'continuous'): Promise<{
+    success: boolean;
+    session: {
+      id: string;
+      userId: string;
+      mode: string;
+      status: string;
+      totalTurns: number;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    isNew: boolean;
+  }> {
+    const response = await authenticatedFetch('/api/voice/session/start', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to start session');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * End current conversation session
+   */
+  async endSession(sessionId: string, status: 'completed' | 'timeout' = 'completed'): Promise<{
+    success: boolean;
+    sessionId: string;
+  }> {
+    const response = await authenticatedFetch(`/api/voice/session/${sessionId}/end`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to end session');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Get active conversation session
+   */
+  async getActiveSession(): Promise<{
+    success: boolean;
+    session: {
+      id: string;
+      userId: string;
+      mode: string;
+      status: string;
+      totalTurns: number;
+      createdAt: Date;
+      updatedAt: Date;
+    } | null;
+  }> {
+    const response = await authenticatedFetch('/api/voice/session/active');
+
+    if (!response.ok) {
+      throw new Error('Failed to get active session');
     }
 
     return response.json();

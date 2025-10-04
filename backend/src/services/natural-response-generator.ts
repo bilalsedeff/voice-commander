@@ -24,6 +24,41 @@ interface GenerateResponseOptions {
 
 export class NaturalResponseGenerator {
   /**
+   * Generate conversational response (no tools executed)
+   */
+  async generateConversationalResponse(
+    query: string,
+    conversationContext?: string
+  ): Promise<string> {
+    try {
+      const systemPrompt = `You are a helpful, proactive voice assistant ready to assist with tasks.
+
+Guidelines:
+- Respond warmly to greetings and offer to help
+- Be enthusiastic and helpful
+- Keep responses under 15 words
+- Always ask what the user wants to do after greeting
+- Sound natural and human
+${conversationContext ? `\nPrevious conversation:\n${conversationContext}` : ''}`;
+
+      const response = await llmService.execute({
+        systemPrompt,
+        userPrompt: query,
+        taskType: LLMTaskType.FAST,
+        requiresJSON: false
+      });
+
+      return response.content.trim();
+    } catch (error) {
+      // Fallback responses for common queries
+      if (/^(hi|hello|hey)/i.test(query)) return "Hello! What would you like me to do?";
+      if (/^(thanks|thank you)/i.test(query)) return "You're welcome! Anything else?";
+      if (/^(bye|goodbye)/i.test(query)) return "Goodbye! Have a great day!";
+      return "I'm ready to help. What can I do for you?";
+    }
+  }
+
+  /**
    * Generate natural spoken response from tool results
    */
   async generateTTSResponse(

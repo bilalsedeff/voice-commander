@@ -10,6 +10,7 @@ import { VoiceOrchestrator } from '../orchestrator/voice-orchestrator';
 import { llmMCPOrchestrator, OrchestrationResult } from '../services/llm-mcp-orchestrator';
 import { mcpConnectionManagerV2 } from '../services/mcp-connection-manager-v2';
 import { naturalResponseGenerator } from '../services/natural-response-generator';
+import { conversationSessionManager } from '../services/conversation-session-manager';
 import { authenticateToken } from '../middleware/auth';
 import { PrismaClient } from '@prisma/client';
 import { CommandExecutionResult, ChainedCommandResult } from '../mcp/types';
@@ -256,7 +257,7 @@ router.post('/llm', authenticateToken, async (req: Request, res: Response): Prom
  */
 router.post('/llm/stream', authenticateToken, async (req: Request, res: Response): Promise<void> => {
   try {
-    const { query } = req.body;
+    const { query, sessionId } = req.body;
     const userId = req.user!.userId;
 
     // Validate input
@@ -279,7 +280,7 @@ router.post('/llm/stream', authenticateToken, async (req: Request, res: Response
       return;
     }
 
-    logger.info('SSE streaming request started', { userId, query });
+    logger.info('SSE streaming request started', { userId, query, sessionId: sessionId || 'none' });
 
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -320,6 +321,7 @@ router.post('/llm/stream', authenticateToken, async (req: Request, res: Response
       // Process query with streaming callbacks
       const result = await llmMCPOrchestrator.processQuery(userId, query, {
         streaming: true,
+        sessionId: sessionId || undefined, // Pass sessionId if provided
         onProgress: (update) => {
           logger.debug('SSE: onProgress callback triggered', { update }); // DEBUG
           if (!connectionClosed) {
@@ -340,6 +342,42 @@ router.post('/llm/stream', authenticateToken, async (req: Request, res: Response
 
       // Clear timeout
       clearTimeout(timeoutId);
+
+      // Save conversation turn if session exists and execution was successful
+      if (sessionId && result.success && !result.needsClarification) {
+        try {
+          // Check if this was a conversational response (no tools)
+          const isConversational = result.results.length === 1 &&
+            result.results[0].service === 'conversational';
+
+          // Generate natural response for assistant
+          const assistantResponse = isConversational
+            ? await naturalResponseGenerator.generateConversationalResponse(query)
+            : await naturalResponseGenerator.generateTTSResponse(
+                query,
+                result.results,
+                { keepShort: false, askFollowUp: true }
+              );
+
+          // Save turn to database
+          await conversationSessionManager.addTurn(sessionId, {
+            userQuery: query,
+            userIntent: result.results.map(r => `${r.service}.${r.tool}`).join(', '),
+            assistantResponse,
+            toolResults: result.results,
+            ttsSpoken: false, // Will be set to true on frontend after TTS plays
+            durationMs: result.totalExecutionTime
+          });
+
+          logger.info('Conversation turn saved', { sessionId, userId });
+        } catch (turnError) {
+          // Don't fail the request if turn saving fails
+          logger.error('Failed to save conversation turn', {
+            sessionId,
+            error: (turnError as Error).message
+          });
+        }
+      }
 
       // Send final result
       if (!connectionClosed) {
@@ -792,6 +830,159 @@ router.post('/generate-response', authenticateToken, async (req: Request, res: R
     res.status(500).json({
       success: false,
       error: 'RESPONSE_GENERATION_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
+
+/**
+ * POST /api/voice/session/start
+ * Start new conversation session
+ */
+router.post('/session/start', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { mode = 'continuous' } = req.body;
+    const userId = req.user!.userId;
+
+    // Check for existing active session
+    let session = await conversationSessionManager.getActiveSession(userId);
+
+    if (session) {
+      logger.info('Returning existing active session', { sessionId: session.id, userId });
+      res.json({
+        success: true,
+        session,
+        isNew: false
+      });
+      return;
+    }
+
+    // Create new session
+    session = await conversationSessionManager.createSession(userId, mode);
+
+    logger.info('New conversation session started', {
+      sessionId: session.id,
+      userId,
+      mode
+    });
+
+    res.json({
+      success: true,
+      session,
+      isNew: true
+    });
+
+  } catch (error) {
+    logger.error('Failed to start session', {
+      error: (error as Error).message
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'SESSION_START_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
+
+/**
+ * POST /api/voice/session/:id/end
+ * End conversation session
+ */
+router.post('/session/:id/end', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id: sessionId } = req.params;
+    const { status = 'completed' } = req.body;
+
+    await conversationSessionManager.endSession(sessionId, status);
+
+    logger.info('Conversation session ended', { sessionId, status });
+
+    res.json({
+      success: true,
+      sessionId
+    });
+
+  } catch (error) {
+    logger.error('Failed to end session', {
+      error: (error as Error).message
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'SESSION_END_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
+
+/**
+ * GET /api/voice/session/active
+ * Get active conversation session
+ */
+router.get('/session/active', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = req.user!.userId;
+
+    const session = await conversationSessionManager.getActiveSession(userId);
+
+    if (!session) {
+      res.json({
+        success: true,
+        session: null
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      session
+    });
+
+  } catch (error) {
+    logger.error('Failed to get active session', {
+      error: (error as Error).message
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'GET_SESSION_ERROR',
+      message: (error as Error).message
+    });
+  }
+});
+
+/**
+ * GET /api/voice/session/:id
+ * Get conversation session with turns
+ */
+router.get('/session/:id', authenticateToken, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id: sessionId } = req.params;
+
+    const session = await conversationSessionManager.getSession(sessionId);
+
+    if (!session) {
+      res.status(404).json({
+        success: false,
+        error: 'SESSION_NOT_FOUND'
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      session
+    });
+
+  } catch (error) {
+    logger.error('Failed to get session', {
+      error: (error as Error).message
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'GET_SESSION_ERROR',
       message: (error as Error).message
     });
   }

@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Loader2, Volume2, AlertCircle, CheckCircle } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Mic, MicOff, Loader2, Volume2, AlertCircle, CheckCircle, Radio } from 'lucide-react';
 import { SpeechAPI } from '@/lib/speech-api';
 import { voice } from '@/lib/api';
+import { useVAD } from '@/hooks/useVAD';
 
 interface VoiceInterfaceProps {
   onCommandExecuted?: (command: string, result: unknown) => void;
@@ -27,9 +28,23 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
   const [error, setError] = useState('');
   const [isSupported, setIsSupported] = useState(true);
 
+  // Mode and Session Management
+  const [mode, setMode] = useState<'continuous' | 'push_to_talk'>('push_to_talk'); // Default to PTT to avoid VAD errors
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isSessionActive, setIsSessionActive] = useState(false);
+  const [hasProcessedCommand, setHasProcessedCommand] = useState(false); // Track if at least one command processed
+  const sessionIdRef = useRef<string | null>(null); // Ref for cleanup
+
   // SSE Progress tracking
   const [progressUpdates, setProgressUpdates] = useState<ProgressUpdate[]>([]);
   const [currentStep, setCurrentStep] = useState<string>('');
+
+  // Conversation history
+  const [conversationHistory, setConversationHistory] = useState<Array<{
+    role: 'user' | 'assistant';
+    message: string;
+    timestamp: Date;
+  }>>([]);
 
   // Voice wave visualization
   const [audioLevel, setAudioLevel] = useState(0);
@@ -66,222 +81,359 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
     }
   }, [isListening]);
 
-  const handleMicClick = () => {
+  // Session Management: Start session when mode changes to continuous
+  useEffect(() => {
+    const initSession = async () => {
+      if (mode === 'continuous' && !sessionId) {
+        try {
+          const result = await voice.startSession('continuous');
+          setSessionId(result.session.id);
+          setIsSessionActive(true);
+          sessionIdRef.current = result.session.id; // Keep ref updated
+          console.log('✅ Session started:', result.session.id);
+        } catch (error) {
+          console.error('Failed to start session:', error);
+        }
+      }
+    };
+
+    initSession();
+  }, [mode, sessionId]);
+
+  // End session when switching from continuous to PTT
+  useEffect(() => {
+    if (mode === 'push_to_talk' && sessionId && isSessionActive) {
+      console.log('🔚 Ending session - switched to PTT mode');
+      voice.endSession(sessionId, 'completed').catch(console.error);
+      setSessionId(null);
+      setIsSessionActive(false);
+      sessionIdRef.current = null;
+    }
+  }, [mode, sessionId, isSessionActive]);
+
+  // Cleanup session on component unmount only
+  useEffect(() => {
+    return () => {
+      if (sessionIdRef.current) {
+        console.log('🔚 Ending session - component unmount');
+        voice.endSession(sessionIdRef.current, 'completed').catch(console.error);
+      }
+    };
+  }, []); // Empty deps - only runs on unmount
+
+  // Process voice command (shared function for both PTT and VAD modes)
+  const processVoiceCommand = useCallback(async (commandText: string) => {
+    if (!speechAPI) return;
+
+    setTranscript(commandText);
+    setIsProcessing(true);
+    setProgressUpdates([]);
+    setCurrentStep('Starting...');
+
+    try {
+      let finalResult: unknown = null;
+      let finalMessage = '';
+
+      await voice.streamCommand(commandText, {
+        onProgress: (update) => {
+          console.log('📊 Progress:', update);
+          setProgressUpdates(prev => [...prev, update]);
+          setCurrentStep(update.message);
+        },
+
+        onResult: async (result) => {
+          console.log('✅ Result:', result);
+          finalResult = result;
+
+          // Extract display message and prepare for natural TTS
+          let displayMessage = '';
+          let ttsMessage = '';
+
+          if (result && typeof result === 'object') {
+            const resultData = result as {
+              success?: boolean;
+              results?: Array<{ success: boolean; tool: string; service: string; data?: unknown; error?: string }>;
+              message?: string;
+              needsClarification?: boolean;
+              clarificationQuestion?: string;
+            };
+
+            // Check if clarification is needed
+            if (resultData.needsClarification && resultData.clarificationQuestion) {
+              displayMessage = `❓ ${resultData.clarificationQuestion}`;
+              ttsMessage = resultData.clarificationQuestion;
+              finalMessage = ttsMessage;
+              setResponse(displayMessage);
+              setCurrentStep('Needs clarification');
+
+              // Add to conversation history
+              setConversationHistory(prev => [
+                ...prev,
+                { role: 'user', message: commandText, timestamp: new Date() },
+                { role: 'assistant', message: displayMessage, timestamp: new Date() }
+              ]);
+              return; // Exit early - don't process as normal result
+            }
+
+            // If results array exists (from LLM orchestrator)
+            if (resultData.results && Array.isArray(resultData.results) && resultData.results.length > 0) {
+              const firstResult = resultData.results[0];
+
+              // Check if conversational (no tools executed)
+              const isConversational = firstResult.service === 'conversational';
+
+              if (isConversational) {
+                // Conversational response - backend already generated it
+                const conversationalData = firstResult.data as { query: string; response: string; type: string };
+                ttsMessage = conversationalData.response;
+                displayMessage = `💬 ${conversationalData.response}`;
+              } else {
+                // Tool execution - generate natural TTS response
+                try {
+                  console.log('🤖 Generating natural TTS response...');
+                  ttsMessage = await voice.generateNaturalResponse(
+                    commandText,
+                    resultData.results,
+                    { keepShort: false, askFollowUp: true }
+                  );
+                  console.log('✅ Natural TTS response:', ttsMessage);
+                } catch (error) {
+                  console.warn('Failed to generate natural response, using fallback', error);
+                  // Fallback to template-based response
+                  if (firstResult.success && firstResult.data && 'count' in (firstResult.data as Record<string, unknown>)) {
+                    const count = (firstResult.data as { count: number }).count;
+                    ttsMessage = count > 0
+                      ? `Found ${count} upcoming event${count > 1 ? 's' : ''}`
+                      : 'No upcoming meetings found';
+                  } else {
+                    ttsMessage = firstResult.success ? 'Done' : 'Command failed';
+                  }
+                }
+
+                // Display message (shorter for UI)
+                if (firstResult.success && firstResult.data && 'count' in (firstResult.data as Record<string, unknown>)) {
+                  const count = (firstResult.data as { count: number }).count;
+                  displayMessage = count > 0
+                    ? `📅 Found ${count} upcoming event${count > 1 ? 's' : ''}`
+                    : '📅 No upcoming meetings found';
+                } else {
+                  displayMessage = firstResult.success ? '✅ Command executed successfully' : `❌ ${firstResult.tool} failed`;
+                }
+              }
+            } else if (resultData.message) {
+              displayMessage = resultData.message;
+              ttsMessage = resultData.message;
+            } else {
+              displayMessage = resultData.success ? '✅ Command executed successfully' : '❌ Command failed';
+              ttsMessage = resultData.success ? 'Done' : 'Command failed';
+            }
+          }
+
+          finalMessage = ttsMessage || displayMessage; // TTS uses natural message
+          setResponse(displayMessage); // UI shows concise message
+          setCurrentStep('Completed');
+
+          // Add to conversation history
+          setConversationHistory(prev => [
+            ...prev,
+            { role: 'user', message: commandText, timestamp: new Date() },
+            { role: 'assistant', message: displayMessage, timestamp: new Date() }
+          ]);
+        },
+
+        onError: (errorData) => {
+          console.error('❌ Error:', errorData);
+          const errorMsg = errorData.message || 'Something went wrong';
+          setError(errorMsg);
+          setResponse(errorMsg);
+          setCurrentStep('Error');
+
+          // Try to speak error (optional)
+          if (speechAPI) {
+            setIsSpeaking(true);
+            speechAPI.speak(`Error: ${errorMsg}`, {
+              lang: 'en-US',
+              onEnd: () => setIsSpeaking(false),
+              onError: () => setIsSpeaking(false),
+            }).catch(() => setIsSpeaking(false)); // Silently fail
+          }
+        },
+
+        onDone: async () => {
+          console.log('🏁 Stream completed');
+          setIsProcessing(false);
+          setCurrentStep('');
+          setHasProcessedCommand(true); // Mark that we've processed at least one command
+
+          // Call parent callback if provided
+          if (finalResult) {
+            onCommandExecuted?.(commandText, finalResult);
+          }
+
+          // Speak response
+          if (finalMessage && !error && speechAPI) {
+            try {
+              await new Promise(resolve => setTimeout(resolve, 300));
+              setIsSpeaking(true);
+
+              const ttsTimeout = setTimeout(() => {
+                setIsSpeaking(false);
+                console.warn('TTS timeout - skipping audio playback');
+              }, 5000);
+
+              await speechAPI.speak(finalMessage, {
+                lang: 'en-US',
+                onEnd: () => {
+                  clearTimeout(ttsTimeout);
+                  setIsSpeaking(false);
+                },
+                onError: (err) => {
+                  clearTimeout(ttsTimeout);
+                  setIsSpeaking(false);
+                  console.debug('TTS unavailable:', err);
+                },
+              }).catch(err => {
+                clearTimeout(ttsTimeout);
+                setIsSpeaking(false);
+                console.debug('TTS skipped:', err.message);
+              });
+            } catch (ttsError) {
+              setIsSpeaking(false);
+              console.debug('TTS unavailable, displaying text only');
+            }
+          }
+        }
+      }, sessionId || undefined);
+
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Something went wrong';
+      setError(errorMsg);
+      setResponse(errorMsg);
+      setIsProcessing(false);
+      setCurrentStep('');
+
+      // Speak error
+      if (speechAPI) {
+        setIsSpeaking(true);
+        await speechAPI.speak(`Error: ${errorMsg}`, {
+          lang: 'en-US',
+          onEnd: () => setIsSpeaking(false),
+          onError: () => setIsSpeaking(false),
+        }).catch(console.error);
+      }
+    }
+  }, [speechAPI, sessionId, error, onCommandExecuted]);
+
+  // VAD Integration for Continuous Mode
+  // TODO: Re-enable when Whisper backend endpoint is ready (POST /api/voice/transcribe)
+  const { isListening: vadIsListening, isSpeaking: vadIsSpeaking } = useVAD({
+    enabled: false, // Temporarily disabled - waiting for Whisper transcription backend
+    onSpeechEnd: async (audioBlob) => {
+      console.log('🎤 VAD: Speech detected, converting to text...');
+      // TODO: Send audioBlob to backend Whisper API for transcription
+      // const formData = new FormData();
+      // formData.append('audio', audioBlob);
+      // const transcript = await voice.transcribeAudio(formData);
+      // await processVoiceCommand(transcript);
+    },
+    onVADError: (error) => {
+      console.error('VAD Error:', error);
+      setError(error.message);
+    },
+  });
+
+  // Extracted: Start listening
+  const startListening = useCallback(() => {
+    if (!speechAPI || isListening || isProcessing) return;
+
+    console.log('🎤 Starting voice recognition...');
+    setTranscript('');
+    setInterimTranscript('');
+    setResponse('');
+    setError('');
+    setProgressUpdates([]);
+    setCurrentStep('');
+
+    speechAPI.startListening({
+      onTranscript: async (finalTranscript) => {
+        console.log('📝 Final transcript:', finalTranscript);
+        setTranscript(finalTranscript);
+        setInterimTranscript('');
+        setIsListening(false);
+
+        // Stop speech recognition before processing
+        speechAPI.stopListening();
+
+        // Wait for audio subsystem to release
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // Process command
+        await processVoiceCommand(finalTranscript);
+      },
+
+      onInterim: (interim) => {
+        setInterimTranscript(interim);
+      },
+
+      onError: (errorMsg) => {
+        console.error('🎤 Speech error:', errorMsg);
+        setError(errorMsg);
+        setIsListening(false);
+        setInterimTranscript('');
+      },
+    });
+
+    setIsListening(true);
+  }, [speechAPI, isListening, isProcessing, processVoiceCommand]);
+
+  // Extracted: Stop listening
+  const stopListening = useCallback(() => {
+    if (!speechAPI || !isListening) return;
+
+    console.log('🎤 Stopping voice recognition...');
+    speechAPI.stopListening();
+    setIsListening(false);
+    setInterimTranscript('');
+  }, [speechAPI, isListening]);
+
+  // Continuous mode: Auto-restart after command completion (only after first command)
+  useEffect(() => {
+    if (mode === 'continuous' && !isListening && !isProcessing && !isSpeaking && speechAPI && hasProcessedCommand) {
+      console.log('🔄 Continuous mode: Auto-restarting listener...');
+      const timer = setTimeout(() => {
+        if (mode === 'continuous' && !isListening && !isProcessing && !isSpeaking) {
+          startListening();
+        }
+      }, 500); // Small delay after TTS
+
+      return () => clearTimeout(timer);
+    }
+  }, [mode, isListening, isProcessing, isSpeaking, speechAPI, hasProcessedCommand, startListening]);
+
+  const handleMicClick = useCallback(() => {
     if (!speechAPI) {
       setError('Speech API not initialized');
       return;
     }
 
-    if (isListening) {
-      // Stop listening
-      speechAPI.stopListening();
-      setIsListening(false);
-      setInterimTranscript('');
+    if (mode === 'push_to_talk') {
+      // Manual toggle for push-to-talk
+      if (isListening) {
+        stopListening();
+      } else {
+        startListening();
+      }
     } else {
-      // Start listening - clear previous session data
-      setTranscript('');
-      setInterimTranscript('');
-      setResponse('');
-      setError('');
-      setProgressUpdates([]); // Clear previous progress history
-      setCurrentStep('');
-
-      speechAPI.startListening({
-        onTranscript: async (finalTranscript) => {
-          console.log('📝 Final transcript:', finalTranscript);
-          setTranscript(finalTranscript);
-          setInterimTranscript('');
-          setIsListening(false);
-
-          // 🔧 FIX: Explicitly stop speech recognition before processing
-          speechAPI.stopListening();
-
-          // Wait for audio subsystem to fully release
-          await new Promise(resolve => setTimeout(resolve, 300));
-
-          setIsProcessing(true);
-          setProgressUpdates([]); // Clear previous progress
-          setCurrentStep('Starting...');
-
-          // Execute command via SSE streaming backend
-          try {
-            let finalResult: unknown = null;
-            let finalMessage = '';
-
-            await voice.streamCommand(finalTranscript, {
-              onProgress: (update) => {
-                console.log('📊 Progress:', update);
-                setProgressUpdates(prev => [...prev, update]);
-                setCurrentStep(update.message);
-              },
-
-              onResult: async (result) => {
-                console.log('✅ Result:', result);
-                finalResult = result;
-
-                // Extract display message and prepare for natural TTS
-                let displayMessage = '';
-                let ttsMessage = '';
-
-                if (result && typeof result === 'object') {
-                  const resultData = result as {
-                    success?: boolean;
-                    results?: Array<{ success: boolean; tool: string; service: string; data?: unknown; error?: string }>;
-                    message?: string;
-                  };
-
-                  // If results array exists (from LLM orchestrator)
-                  if (resultData.results && Array.isArray(resultData.results) && resultData.results.length > 0) {
-                    // Generate natural TTS response via LLM
-                    try {
-                      console.log('🤖 Generating natural TTS response...');
-                      ttsMessage = await voice.generateNaturalResponse(
-                        finalTranscript,
-                        resultData.results,
-                        { keepShort: false, askFollowUp: true }
-                      );
-                      console.log('✅ Natural TTS response:', ttsMessage);
-                    } catch (error) {
-                      console.warn('Failed to generate natural response, using fallback', error);
-                      // Fallback to template-based response
-                      const firstResult = resultData.results[0];
-                      if (firstResult.success && firstResult.data && 'count' in (firstResult.data as Record<string, unknown>)) {
-                        const count = (firstResult.data as { count: number }).count;
-                        ttsMessage = count > 0
-                          ? `Found ${count} upcoming event${count > 1 ? 's' : ''}`
-                          : 'No upcoming meetings found';
-                      } else {
-                        ttsMessage = firstResult.success ? 'Done' : 'Command failed';
-                      }
-                    }
-
-                    // Display message (shorter for UI)
-                    const firstResult = resultData.results[0];
-                    if (firstResult.success && firstResult.data && 'count' in (firstResult.data as Record<string, unknown>)) {
-                      const count = (firstResult.data as { count: number }).count;
-                      displayMessage = count > 0
-                        ? `📅 Found ${count} upcoming event${count > 1 ? 's' : ''}`
-                        : '📅 No upcoming meetings found';
-                    } else {
-                      displayMessage = firstResult.success ? '✅ Command executed successfully' : `❌ ${firstResult.tool} failed`;
-                    }
-                  } else if (resultData.message) {
-                    displayMessage = resultData.message;
-                    ttsMessage = resultData.message;
-                  } else {
-                    displayMessage = resultData.success ? '✅ Command executed successfully' : '❌ Command failed';
-                    ttsMessage = resultData.success ? 'Done' : 'Command failed';
-                  }
-                }
-
-                finalMessage = ttsMessage || displayMessage; // TTS uses natural message
-                setResponse(displayMessage); // UI shows concise message
-                setCurrentStep('Completed');
-              },
-
-              onError: (errorData) => {
-                console.error('❌ Error:', errorData);
-                const errorMsg = errorData.message || 'Something went wrong';
-                setError(errorMsg);
-                setResponse(errorMsg);
-                setCurrentStep('Error');
-
-                // Try to speak error (optional)
-                if (speechAPI) {
-                  setIsSpeaking(true);
-                  speechAPI.speak(`Error: ${errorMsg}`, {
-                    lang: 'en-US',
-                    onEnd: () => setIsSpeaking(false),
-                    onError: () => setIsSpeaking(false),
-                  }).catch(() => setIsSpeaking(false)); // Silently fail
-                }
-              },
-
-              onDone: async () => {
-                console.log('🏁 Stream completed');
-                setIsProcessing(false);
-                setCurrentStep('');
-
-                // Call parent callback if provided
-                if (finalResult) {
-                  onCommandExecuted?.(finalTranscript, finalResult);
-                }
-
-                // Speak response in English (optional - may fail due to browser audio conflicts)
-                console.log('🔊 TTS Check:', { finalMessage, error, hasSpeechAPI: !!speechAPI }); // DEBUG
-                if (finalMessage && !error && speechAPI) {
-                  try {
-                    console.log('🎤 Speaking TTS:', finalMessage); // DEBUG
-                    // Wait for audio subsystem to fully release (300ms minimum)
-                    await new Promise(resolve => setTimeout(resolve, 300));
-
-                    setIsSpeaking(true);
-
-                    // Use timeout to prevent hanging
-                    const ttsTimeout = setTimeout(() => {
-                      setIsSpeaking(false);
-                      console.warn('TTS timeout - skipping audio playback');
-                    }, 5000);
-
-                    await speechAPI.speak(finalMessage, {
-                      lang: 'en-US',
-                      onEnd: () => {
-                        clearTimeout(ttsTimeout);
-                        setIsSpeaking(false);
-                      },
-                      onError: (err) => {
-                        clearTimeout(ttsTimeout);
-                        setIsSpeaking(false);
-                        // Silently fail - TTS is non-critical
-                        console.debug('TTS unavailable (expected after voice input):', err);
-                      },
-                    }).catch(err => {
-                      clearTimeout(ttsTimeout);
-                      setIsSpeaking(false);
-                      // Don't log as error - this is expected behavior
-                      console.debug('TTS skipped:', err.message);
-                    });
-                  } catch (ttsError) {
-                    setIsSpeaking(false);
-                    // TTS failure is not critical - user already sees text response
-                    console.debug('TTS unavailable, displaying text only');
-                  }
-                }
-              }
-            });
-
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : 'Something went wrong';
-            setError(errorMsg);
-            setResponse(errorMsg);
-            setIsProcessing(false);
-            setCurrentStep('');
-
-            // Speak error in English
-            setIsSpeaking(true);
-            await speechAPI.speak(`Error: ${errorMsg}`, {
-              lang: 'en-US',
-              onEnd: () => setIsSpeaking(false),
-              onError: () => setIsSpeaking(false),
-            }).catch(console.error);
-          }
-        },
-
-        onInterim: (interim) => {
-          setInterimTranscript(interim);
-        },
-
-        onError: (errorMsg) => {
-          console.error('🎤 Speech error:', errorMsg);
-          setError(errorMsg);
-          setIsListening(false);
-          setInterimTranscript('');
-        },
-      });
-
-      setIsListening(true);
+      // Continuous mode: Manual clicks can pause/resume
+      if (isListening) {
+        console.log('🔇 User paused continuous mode');
+        stopListening();
+      } else {
+        console.log('▶️ User started continuous mode');
+        startListening();
+      }
     }
-  };
+  }, [speechAPI, mode, isListening, startListening, stopListening]);
 
   // Determine button state and style
   const getButtonStyle = () => {
@@ -321,6 +473,42 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
 
   return (
     <div className="max-w-3xl mx-auto p-8">
+      {/* Mode Toggle */}
+      <div className="flex justify-center mb-6">
+        <div className="inline-flex rounded-lg border border-gray-300 bg-white p-1">
+          <button
+            onClick={() => setMode('continuous')}
+            className={`
+              px-4 py-2 rounded-md text-sm font-medium transition-colors
+              ${mode === 'continuous'
+                ? 'bg-indigo-600 text-white'
+                : 'text-gray-700 hover:bg-gray-100'
+              }
+            `}
+          >
+            <div className="flex items-center gap-2">
+              <Radio className="w-4 h-4" />
+              Continuous
+            </div>
+          </button>
+          <button
+            onClick={() => setMode('push_to_talk')}
+            className={`
+              px-4 py-2 rounded-md text-sm font-medium transition-colors
+              ${mode === 'push_to_talk'
+                ? 'bg-indigo-600 text-white'
+                : 'text-gray-700 hover:bg-gray-100'
+              }
+            `}
+          >
+            <div className="flex items-center gap-2">
+              <Mic className="w-4 h-4" />
+              Push to Talk
+            </div>
+          </button>
+        </div>
+      </div>
+
       {/* Microphone Button */}
       <div className="text-center mb-8">
         <button
@@ -365,60 +553,44 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
         </div>
       )}
 
-      {/* Interim Transcript (Live) */}
-      {interimTranscript && (
-        <div className="bg-gray-50 p-4 rounded-lg mb-4 border border-gray-200">
+      {/* Interim Transcript (Live - Only while listening) */}
+      {interimTranscript && isListening && (
+        <div className="bg-gray-50 p-2 rounded-lg mb-2 border border-gray-200 animate-pulse">
           <p className="text-gray-500 text-sm italic">
             {interimTranscript}
           </p>
         </div>
       )}
 
-      {/* Final Transcript Display */}
-      {transcript && (
-        <div className="bg-white p-6 rounded-xl shadow-md mb-4 border border-gray-200">
-          <div className="flex items-start gap-3">
-            <Mic className="w-5 h-5 text-indigo-600 mt-1 flex-shrink-0" />
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-gray-500 mb-2">You said:</h3>
-              <p className="text-lg text-gray-900 font-medium">{transcript}</p>
-            </div>
+      {/* Single-line Processing Status - Only show while processing */}
+      {isProcessing && currentStep && (
+        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-3 rounded-lg shadow-sm mb-4 border border-indigo-200 animate-pulse">
+          <div className="flex items-center gap-2">
+            <span className="text-indigo-600 font-bold animate-bounce">*</span>
+            <p className="text-sm font-medium text-indigo-900">{currentStep}</p>
           </div>
         </div>
       )}
 
-      {/* Real-time Progress Display - Show if processing OR has progress history */}
-      {(isProcessing || progressUpdates.length > 0) && (
-        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 p-6 rounded-xl shadow-md mb-4 border border-indigo-200">
-          <div className="flex items-center gap-3 mb-4">
-            {isProcessing ? (
-              <>
-                <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
-                <h3 className="text-sm font-semibold text-indigo-900">Processing...</h3>
-              </>
-            ) : (
-              <>
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <h3 className="text-sm font-semibold text-green-900">Execution Flow:</h3>
-              </>
-            )}
-          </div>
-          <div className="space-y-3">
-            {progressUpdates.map((update, idx) => (
+      {/* Conversation History - Compact Chat Style */}
+      {conversationHistory.length > 0 && (
+        <div className="bg-white rounded-xl shadow-md border border-gray-200 mb-4 max-h-64 overflow-y-auto">
+          <div className="p-3 space-y-2">
+            {conversationHistory.map((msg, idx) => (
               <div
                 key={idx}
-                className={`flex items-start gap-3 transition-opacity ${
-                  idx === progressUpdates.length - 1 ? 'opacity-100' : 'opacity-60'
-                }`}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${
-                  idx === progressUpdates.length - 1 ? 'bg-indigo-600 animate-pulse' : 'bg-gray-400'
-                }`}></div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{update.step}</p>
-                  <p className="text-sm text-gray-600">{update.message}</p>
-                  <p className="text-xs text-gray-400 mt-1">
-                    {new Date(update.timestamp).toLocaleTimeString()}
+                <div
+                  className={`max-w-[80%] px-3 py-2 rounded-lg text-sm ${
+                    msg.role === 'user'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-100 text-gray-900'
+                  }`}
+                >
+                  <p>{msg.message}</p>
+                  <p className={`text-xs mt-1 ${msg.role === 'user' ? 'text-indigo-200' : 'text-gray-500'}`}>
+                    {msg.timestamp.toLocaleTimeString()}
                   </p>
                 </div>
               </div>
@@ -427,28 +599,12 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
         </div>
       )}
 
-      {/* Response Display */}
-      {response && !error && (
-        <div className="bg-indigo-50 p-6 rounded-xl shadow-md border border-indigo-200">
-          <div className="flex items-start gap-3">
-            <Volume2 className="w-5 h-5 text-indigo-600 mt-1 flex-shrink-0" />
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-indigo-600 mb-2">Response:</h3>
-              <p className="text-lg text-gray-900">{response}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Error Display */}
+      {/* Current Error Display (if any) */}
       {error && (
-        <div className="bg-red-50 p-6 rounded-xl shadow-md border border-red-200">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 mt-1 flex-shrink-0" />
-            <div className="flex-1">
-              <h3 className="text-sm font-semibold text-red-600 mb-2">Error:</h3>
-              <p className="text-gray-900">{error}</p>
-            </div>
+        <div className="bg-red-50 p-3 rounded-lg shadow-sm mb-4 border border-red-200">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+            <p className="text-sm text-red-900">{error}</p>
           </div>
         </div>
       )}
