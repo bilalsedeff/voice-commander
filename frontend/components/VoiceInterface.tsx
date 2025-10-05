@@ -33,6 +33,7 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [hasProcessedCommand, setHasProcessedCommand] = useState(false); // Track if at least one command processed
+  const [isPausedByUser, setIsPausedByUser] = useState(false); // Track manual pause in continuous mode
   const sessionIdRef = useRef<string | null>(null); // Ref for cleanup
 
   // SSE Progress tracking
@@ -275,17 +276,21 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
             try {
               await new Promise(resolve => setTimeout(resolve, 300));
               setIsSpeaking(true);
+              console.log('🔊 Speaking:', finalMessage.substring(0, 100) + '...');
 
+              // Calculate timeout based on message length (20 chars per second average)
+              const estimatedDuration = Math.max(10000, (finalMessage.length / 20) * 1000);
               const ttsTimeout = setTimeout(() => {
                 setIsSpeaking(false);
-                console.warn('TTS timeout - skipping audio playback');
-              }, 5000);
+                console.warn('TTS timeout - skipping audio playback after', estimatedDuration, 'ms');
+              }, estimatedDuration);
 
               await speechAPI.speak(finalMessage, {
                 lang: 'en-US',
                 onEnd: () => {
                   clearTimeout(ttsTimeout);
                   setIsSpeaking(false);
+                  console.log('✅ TTS finished successfully');
                 },
                 onError: (err) => {
                   clearTimeout(ttsTimeout);
@@ -396,19 +401,23 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
     setInterimTranscript('');
   }, [speechAPI, isListening]);
 
-  // Continuous mode: Auto-restart after command completion (only after first command)
+  // Continuous mode: Auto-restart after command completion (only after first command, not if paused by user)
   useEffect(() => {
-    if (mode === 'continuous' && !isListening && !isProcessing && !isSpeaking && speechAPI && hasProcessedCommand) {
+    if (mode === 'continuous' && !isListening && !isProcessing && !isSpeaking && speechAPI && hasProcessedCommand && !isPausedByUser) {
       console.log('🔄 Continuous mode: Auto-restarting listener...');
       const timer = setTimeout(() => {
-        if (mode === 'continuous' && !isListening && !isProcessing && !isSpeaking) {
+        // Double-check conditions before restarting (TTS might still be playing)
+        if (mode === 'continuous' && !isListening && !isProcessing && !isSpeaking && !isPausedByUser) {
+          console.log('✅ Conditions met, restarting listener now');
           startListening();
+        } else {
+          console.log('⏸️ Conditions changed, not restarting', { isListening, isProcessing, isSpeaking, isPausedByUser });
         }
-      }, 500); // Small delay after TTS
+      }, 2000); // 2 second delay to ensure TTS completes
 
       return () => clearTimeout(timer);
     }
-  }, [mode, isListening, isProcessing, isSpeaking, speechAPI, hasProcessedCommand, startListening]);
+  }, [mode, isListening, isProcessing, isSpeaking, speechAPI, hasProcessedCommand, isPausedByUser, startListening]);
 
   const handleMicClick = useCallback(() => {
     if (!speechAPI) {
@@ -427,9 +436,11 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
       // Continuous mode: Manual clicks can pause/resume
       if (isListening) {
         console.log('🔇 User paused continuous mode');
+        setIsPausedByUser(true); // Prevent auto-restart
         stopListening();
       } else {
-        console.log('▶️ User started continuous mode');
+        console.log('▶️ User resumed continuous mode');
+        setIsPausedByUser(false); // Allow auto-restart
         startListening();
       }
     }

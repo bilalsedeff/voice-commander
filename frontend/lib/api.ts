@@ -45,59 +45,41 @@ interface OAuthConnectionsResponse {
 }
 
 /**
- * Get stored JWT token from localStorage
+ * Check if user is authenticated by checking if we can access /api/auth/me
+ * Tokens are now in httpOnly cookies, so we can't check localStorage
  */
-function getToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('accessToken');
+async function checkAuth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
+      credentials: 'include' // Send cookies with request
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Store JWT tokens in localStorage
- */
-function storeTokens(tokens: AuthTokens): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('accessToken', tokens.accessToken);
-  localStorage.setItem('refreshToken', tokens.refreshToken);
-  localStorage.setItem('tokenExpiry', (Date.now() + tokens.expiresIn).toString());
-}
-
-/**
- * Clear stored tokens
- */
-function clearTokens(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem('accessToken');
-  localStorage.removeItem('refreshToken');
-  localStorage.removeItem('tokenExpiry');
-}
-
-/**
- * Make authenticated API request
+ * Make authenticated API request (with cookies)
+ * Cookies are sent automatically with credentials: 'include'
  */
 async function authenticatedFetch(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = getToken();
-  if (!token) {
-    throw new Error('No authentication token found');
-  }
-
   const headers = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
     ...options.headers,
   };
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
+    credentials: 'include', // Send cookies with request
     headers,
   });
 
-  // If unauthorized, clear tokens and redirect to login
+  // If unauthorized, redirect to login (cookies will be cleared by logout endpoint)
   if (response.status === 401 || response.status === 403) {
-    clearTokens();
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
@@ -110,9 +92,10 @@ async function authenticatedFetch(
  * Authentication API
  */
 export const auth = {
-  async register(email: string, password: string, name?: string): Promise<RegisterResponse> {
+  async register(email: string, password: string, name?: string): Promise<{ success: boolean; user: User }> {
     const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
       method: 'POST',
+      credentials: 'include', // Send/receive cookies
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, name }),
     });
@@ -122,14 +105,13 @@ export const auth = {
       throw new Error(error.message || 'Registration failed');
     }
 
-    const data: RegisterResponse = await response.json();
-    storeTokens(data.tokens);
-    return data;
+    return await response.json();
   },
 
-  async login(email: string, password: string): Promise<LoginResponse> {
+  async login(email: string, password: string): Promise<{ success: boolean; user: User }> {
     const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
       method: 'POST',
+      credentials: 'include', // Send/receive cookies
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
@@ -139,9 +121,7 @@ export const auth = {
       throw new Error(error.message || 'Login failed');
     }
 
-    const data: LoginResponse = await response.json();
-    storeTokens(data.tokens);
-    return data;
+    return await response.json();
   },
 
   async logout(): Promise<void> {
@@ -150,7 +130,6 @@ export const auth = {
         method: 'POST',
       });
     } finally {
-      clearTokens();
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }
@@ -168,8 +147,8 @@ export const auth = {
     return data.user;
   },
 
-  isAuthenticated(): boolean {
-    return !!getToken();
+  async isAuthenticated(): Promise<boolean> {
+    return await checkAuth();
   },
 };
 
@@ -180,16 +159,18 @@ export const oauth = {
   /**
    * Start OAuth flow for a provider
    * Redirects to backend OAuth authorization endpoint
+   * Cookies are sent automatically with the redirect
    */
   async connect(provider: string): Promise<void> {
-    const token = getToken();
-    if (!token) {
+    // Check if user is authenticated (cookies will be sent automatically)
+    const isAuth = await checkAuth();
+    if (!isAuth) {
       throw new Error('Please login first');
     }
 
-    // Redirect to backend OAuth authorization endpoint with token as query parameter
-    // Note: window.location.href redirect cannot send Authorization headers
-    window.location.href = `${API_BASE_URL}/api/oauth/${provider}/authorize?token=${encodeURIComponent(token)}`;
+    // Redirect to backend OAuth authorization endpoint
+    // Cookies will be sent automatically by the browser
+    window.location.href = `${API_BASE_URL}/api/oauth/${provider}/authorize`;
   },
 
   /**
@@ -265,19 +246,14 @@ export const voice = {
     },
     sessionId?: string
   ): Promise<void> {
-    const token = getToken();
-    if (!token) {
-      throw new Error('No authentication token found');
-    }
-
     const url = `${API_BASE_URL}/api/voice/llm/stream`;
 
     try {
       const response = await fetch(url, {
         method: 'POST',
+        credentials: 'include', // Send cookies automatically
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
           'Accept': 'text/event-stream',
         },
         body: JSON.stringify({
@@ -289,7 +265,6 @@ export const voice = {
       if (!response.ok) {
         // Handle unauthorized
         if (response.status === 401 || response.status === 403) {
-          clearTokens();
           if (typeof window !== 'undefined') {
             window.location.href = '/login';
           }

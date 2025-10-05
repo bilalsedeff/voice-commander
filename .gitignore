@@ -41,6 +41,8 @@ pids/
 # Coverage directory used by tools like istanbul
 coverage/
 .nyc_output/
+todo-highlevel/
+
 
 # IDE and editor files
 .vscode/

@@ -62,10 +62,24 @@ router.post(
         ip: req.ip
       });
 
+      // Set tokens in httpOnly cookies
+      res.cookie('accessToken', result.tokens.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: result.tokens.expiresIn
+      });
+
+      res.cookie('refreshToken', result.tokens.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
       res.status(201).json({
         success: true,
-        user: result.user,
-        tokens: result.tokens
+        user: result.user
       });
 
     } catch (error) {
@@ -132,10 +146,24 @@ router.post(
         ip: req.ip
       });
 
+      // Set tokens in httpOnly cookies
+      res.cookie('accessToken', result.tokens.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: result.tokens.expiresIn
+      });
+
+      res.cookie('refreshToken', result.tokens.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
       res.status(200).json({
         success: true,
-        user: result.user,
-        tokens: result.tokens
+        user: result.user
       });
 
     } catch (error) {
@@ -225,11 +253,16 @@ router.post(
   '/logout',
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const { refreshToken } = req.body;
+      // Get refresh token from cookie or body (backward compatibility)
+      const refreshToken = req.cookies.refreshToken || req.body.refreshToken;
 
       if (refreshToken) {
         await authService.logout(refreshToken);
       }
+
+      // Clear cookies
+      res.clearCookie('accessToken');
+      res.clearCookie('refreshToken');
 
       logger.info('User logged out via API', {
         ip: req.ip
@@ -374,12 +407,26 @@ router.get(
         isNewUser: result.isNewUser
       });
 
-      // Redirect to frontend with tokens in URL (will be moved to localStorage)
-      const redirectUrl = new URL(`${process.env.FRONTEND_URL}/auth/callback`);
-      redirectUrl.searchParams.set('access_token', result.tokens.accessToken);
-      redirectUrl.searchParams.set('refresh_token', result.tokens.refreshToken);
-      redirectUrl.searchParams.set('expires_in', result.tokens.expiresIn.toString());
-      redirectUrl.searchParams.set('is_new_user', result.isNewUser.toString());
+      // Set tokens in httpOnly cookies
+      res.cookie('accessToken', result.tokens.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax', // lax for OAuth redirects
+        maxAge: result.tokens.expiresIn
+      });
+
+      res.cookie('refreshToken', result.tokens.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax', // lax for OAuth redirects
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
+      // Redirect to frontend (tokens are now in cookies)
+      const redirectUrl = new URL(`${process.env.FRONTEND_URL}/dashboard`);
+      if (result.isNewUser) {
+        redirectUrl.searchParams.set('welcome', 'true');
+      }
 
       res.redirect(redirectUrl.toString());
 

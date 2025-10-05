@@ -104,7 +104,8 @@ model VoiceSession {
   status String @default("active") // "active" | "completed" | "timeout"
 
   // Short-term memory (last 10 interactions)
-  contextSummary String? // LLM-generated summary of conversation
+  contextSummary      String? // LLM-generated summary of conversation
+  lastSummarizedTurn  Int?    // Last turn number included in summary
 
   // Session stats
   commandCount Int @default(0)

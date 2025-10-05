@@ -51,7 +51,8 @@
       "Bash(tree:*)",
       "Bash(awk:*)",
       "Bash(if exist .next rmdir /s /q .next)",
-      "Read(//c//**)"
+      "Read(//c//**)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"I confirm\" npx prisma migrate reset --force)"
     ],
     "deny": [],
     "ask": []

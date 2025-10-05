@@ -47,6 +47,8 @@ export class SpeechAPI {
   private onInterimCallback?: (transcript: string) => void;
   private onErrorCallback?: (error: string) => void;
   private isListening: boolean = false;
+  private finalizeTimer?: NodeJS.Timeout; // Timer for delayed finalization
+  private lastInterimTranscript: string = ''; // Store last interim result
 
   constructor() {
     // Initialize Speech Recognition (STT)
@@ -57,7 +59,7 @@ export class SpeechAPI {
     }
 
     this.recognition = new SpeechRecognition();
-    this.recognition.continuous = false; // Stop after one utterance
+    this.recognition.continuous = true; // Keep listening (don't auto-stop)
     this.recognition.interimResults = true; // Get partial results
     this.recognition.lang = 'en-US'; // Default language
     this.recognition.maxAlternatives = 1; // Only best result
@@ -81,12 +83,33 @@ export class SpeechAPI {
       // Interim result (partial transcription)
       if (!lastResult.isFinal) {
         const interimTranscript = lastResult[0].transcript;
+        this.lastInterimTranscript = interimTranscript;
         this.onInterimCallback?.(interimTranscript);
+
+        // Clear previous timer and start new one
+        // Wait 2 seconds after last speech before finalizing
+        if (this.finalizeTimer) {
+          clearTimeout(this.finalizeTimer);
+        }
+
+        this.finalizeTimer = setTimeout(() => {
+          // No new speech for 2 seconds - finalize current interim transcript
+          if (this.lastInterimTranscript && this.isListening) {
+            console.log(`⏱️ Auto-finalizing after 2s pause: "${this.lastInterimTranscript}"`);
+            this.onTranscriptCallback?.(this.lastInterimTranscript);
+            this.lastInterimTranscript = '';
+            this.recognition.stop(); // Stop recognition to trigger onend
+          }
+        }, 2000); // 2 second delay
       } else {
-        // Final result
+        // Final result from browser
+        if (this.finalizeTimer) {
+          clearTimeout(this.finalizeTimer);
+        }
         const transcript = lastResult[0].transcript;
         const confidence = lastResult[0].confidence;
         console.log(`📝 Final transcript: "${transcript}" (confidence: ${confidence.toFixed(2)})`);
+        this.lastInterimTranscript = '';
         this.onTranscriptCallback?.(transcript);
       }
     };
@@ -157,6 +180,12 @@ export class SpeechAPI {
    */
   stopListening() {
     if (this.isListening) {
+      // Clear any pending finalize timer
+      if (this.finalizeTimer) {
+        clearTimeout(this.finalizeTimer);
+        this.finalizeTimer = undefined;
+      }
+      this.lastInterimTranscript = '';
       this.recognition.stop();
     }
   }

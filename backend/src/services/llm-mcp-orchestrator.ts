@@ -233,6 +233,7 @@ export class LLMMCPOrchestrator {
 
       // Step 4: Execute Command Chain
       const results: ExecutionResult[] = [];
+      let previousResult: ExecutionResult | null = null;
 
       for (let i = 0; i < executionPlan.selectedTools.length; i++) {
         const selectedTool = executionPlan.selectedTools[i];
@@ -244,8 +245,88 @@ export class LLMMCPOrchestrator {
           data: { service: selectedTool.service, tool: selectedTool.tool }
         });
 
+        // 🔧 SPECIAL CASE: list_events followed by delete_event
+        // If previous tool was list_events and current tool is delete_event,
+        // automatically delete all events from the list
+        if (
+          previousResult?.success &&
+          selectedTool.tool === 'delete_event' &&
+          i > 0 &&
+          executionPlan.selectedTools[i - 1].tool === 'list_events'
+        ) {
+          const eventsData = previousResult.data as { events?: Array<{ id: string; summary: string }> };
+          const events = eventsData?.events || [];
+
+          if (events.length === 0) {
+            results.push({
+              success: false,
+              service: selectedTool.service,
+              tool: selectedTool.tool,
+              data: null,
+              executionTime: 0,
+              error: 'No events found to delete'
+            });
+            emitProgress({
+              type: 'error',
+              message: '✗ No events found to delete',
+              timestamp: Date.now()
+            });
+            break;
+          }
+
+          // Delete each event
+          let deletedCount = 0;
+          const deleteResults = [];
+
+          for (const event of events) {
+            try {
+              const deleteResult = await this.executeTool(userId, {
+                ...selectedTool,
+                params: { eventId: event.id }
+              });
+
+              deleteResults.push(deleteResult);
+
+              if (deleteResult.success) {
+                deletedCount++;
+                emitProgress({
+                  type: 'executing',
+                  message: `✓ Deleted: ${event.summary} (${deletedCount}/${events.length})`,
+                  timestamp: Date.now()
+                });
+              }
+            } catch (error) {
+              logger.error('Failed to delete event', { eventId: event.id, error: (error as Error).message });
+            }
+          }
+
+          // Aggregate result
+          const aggregatedResult: ExecutionResult = {
+            success: deletedCount > 0,
+            service: selectedTool.service,
+            tool: selectedTool.tool,
+            data: { deletedCount, totalEvents: events.length, results: deleteResults },
+            executionTime: deleteResults.reduce((sum, r) => sum + r.executionTime, 0),
+            error: deletedCount === 0 ? 'Failed to delete any events' : undefined
+          };
+
+          results.push(aggregatedResult);
+          previousResult = aggregatedResult;
+
+          emitProgress({
+            type: 'completed',
+            message: `✓ Deleted ${deletedCount} of ${events.length} events`,
+            timestamp: Date.now(),
+            data: aggregatedResult.data
+          });
+
+          continue; // Skip normal execution
+        }
+
+        // Normal execution
         const result = await this.executeTool(userId, selectedTool);
         results.push(result);
+        previousResult = result;
 
         if (result.success) {
           emitProgress({
@@ -535,13 +616,19 @@ ${toolsJSON}
 
 Rules:
 - Only use tools that are explicitly available in the tool registry
-- Prefer single tools over chains when possible
 - Extract all parameters from user query (use natural language for times like "tomorrow 3pm")
 - If the query is ambiguous or missing critical information, set needsClarification=true
 - Return confidence score (0-1) based on how well you understand the request
 - For chained commands (e.g., "create event AND send slack message"), include multiple tools in selectedTools array
+- **CRITICAL**: For DELETE/UPDATE operations, you MUST include BOTH list AND delete/update tools:
+  * Example: "delete tomorrow's meetings" requires: [list_events, delete_event]
+  * Example: "cancel my 3pm meeting" requires: [list_events, delete_event]
+  * First tool identifies the target items, second tool performs the action
+  * Do NOT just list items without performing the requested action
 
 Output Format (MUST be valid JSON):
+
+Example 1 - Simple create operation:
 {
   "selectedTools": [
     {
@@ -556,6 +643,33 @@ Output Format (MUST be valid JSON):
   ],
   "executionPlan": "Create a calendar event for tomorrow at 3pm with John",
   "confidence": 0.95,
+  "needsClarification": false,
+  "clarificationQuestion": null
+}
+
+Example 2 - DELETE operation (REQUIRES list + delete):
+{
+  "selectedTools": [
+    {
+      "service": "google_calendar",
+      "tool": "list_events",
+      "params": {
+        "timeMin": "tomorrow at 00:00",
+        "timeMax": "tomorrow at 23:59"
+      },
+      "reasoning": "First, find all meetings scheduled for tomorrow"
+    },
+    {
+      "service": "google_calendar",
+      "tool": "delete_event",
+      "params": {
+        "eventId": "{{RESULT_FROM_PREVIOUS_TOOL}}"
+      },
+      "reasoning": "Then delete each event found in the list"
+    }
+  ],
+  "executionPlan": "List tomorrow's events, then delete all of them",
+  "confidence": 0.9,
   "needsClarification": false,
   "clarificationQuestion": null
 }

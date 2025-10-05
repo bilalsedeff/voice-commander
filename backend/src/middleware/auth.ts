@@ -42,9 +42,13 @@ export function authenticateToken(
   next: NextFunction
 ): void {
   try {
-    // Extract token from Authorization header or query parameter
-    const authHeader = req.headers['authorization'];
-    let token = authHeader?.split(' ')[1]; // Bearer <token>
+    // Extract token from multiple sources (priority: cookie > header > query)
+    let token = req.cookies?.accessToken; // From httpOnly cookie (most secure)
+
+    if (!token) {
+      const authHeader = req.headers['authorization'];
+      token = authHeader?.split(' ')[1]; // Bearer <token> from header
+    }
 
     // Fallback to query parameter (for OAuth redirects that can't send headers)
     if (!token && req.query.token && typeof req.query.token === 'string') {
@@ -108,8 +112,13 @@ export function optionalAuth(
   next: NextFunction
 ): void {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader?.split(' ')[1];
+    // Extract token from multiple sources (priority: cookie > header)
+    let token = req.cookies?.accessToken;
+
+    if (!token) {
+      const authHeader = req.headers['authorization'];
+      token = authHeader?.split(' ')[1];
+    }
 
     if (token) {
       const payload = verifyAccessToken(token);

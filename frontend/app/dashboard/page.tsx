@@ -81,7 +81,8 @@ function DashboardContent() {
   useEffect(() => {
     const initializeDashboard = async () => {
       // Check if user is authenticated
-      if (!auth.isAuthenticated()) {
+      const isAuth = await auth.isAuthenticated();
+      if (!isAuth) {
         window.location.href = '/login';
         return;
       }

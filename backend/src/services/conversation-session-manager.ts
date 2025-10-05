@@ -7,6 +7,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import logger from '../utils/logger';
+import { llmService, LLMTaskType } from './llm-service';
 
 const prisma = new PrismaClient();
 
@@ -32,8 +33,17 @@ export interface VoiceSessionData {
 }
 
 export class ConversationSessionManager {
-  private readonly MAX_CONTEXT_TURNS = 5; // Keep last 5 turns for context
+  private readonly MAX_CONTEXT_TURNS = 15; // Keep last 15 turns for context (30 messages total)
   private readonly SESSION_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+  private readonly MAX_CONTEXT_TOKENS = 2500; // Trigger summarization above this
+  private readonly RECENT_TURNS_TO_KEEP = 5; // Always keep last 5 turns intact
+
+  /**
+   * Estimate token count (simple heuristic: 1 token ≈ 4 characters)
+   */
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
 
   /**
    * Create new conversation session
@@ -153,10 +163,18 @@ export class ConversationSessionManager {
   }
 
   /**
-   * Get conversation context (last N turns)
+   * Get conversation context with smart summarization
+   * Returns summary + recent turns if context is too long
    */
   async getContext(sessionId: string, maxTurns: number = this.MAX_CONTEXT_TURNS): Promise<string> {
     try {
+      // Get session to check for existing summary
+      const session = await prisma.voiceSession.findUnique({
+        where: { id: sessionId },
+        select: { contextSummary: true, lastSummarizedTurn: true }
+      });
+
+      // Get all recent turns
       const turns = await prisma.conversationTurn.findMany({
         where: { sessionId },
         orderBy: { turnNumber: 'desc' },
@@ -170,14 +188,52 @@ export class ConversationSessionManager {
       // Reverse to get chronological order
       const chronologicalTurns = turns.reverse();
 
-      // Format as conversation context
-      const context = chronologicalTurns
-        .map(turn =>
-          `User: ${turn.userQuery}\nAssistant: ${turn.assistantResponse}`
-        )
+      // Build full context
+      const fullContext = chronologicalTurns
+        .map(turn => `User: ${turn.userQuery}\nAssistant: ${turn.assistantResponse}`)
         .join('\n\n');
 
-      return context;
+      // Estimate tokens
+      const tokenCount = this.estimateTokens(fullContext);
+
+      // If context is small enough, return as-is
+      if (tokenCount <= this.MAX_CONTEXT_TOKENS) {
+        logger.debug('Context within token limit', { sessionId, tokens: tokenCount });
+        return fullContext;
+      }
+
+      // Context too long - use summary + recent turns
+      logger.info('Context exceeds token limit, using summary', {
+        sessionId,
+        tokens: tokenCount,
+        limit: this.MAX_CONTEXT_TOKENS
+      });
+
+      // Get recent turns to keep
+      const recentTurns = chronologicalTurns.slice(-this.RECENT_TURNS_TO_KEEP);
+      const recentContext = recentTurns
+        .map(turn => `User: ${turn.userQuery}\nAssistant: ${turn.assistantResponse}`)
+        .join('\n\n');
+
+      // Trigger async summarization if needed
+      const oldestRecentTurn = recentTurns[0]?.turnNumber || 0;
+      const needsSummarization = !session?.lastSummarizedTurn ||
+                                 session.lastSummarizedTurn < oldestRecentTurn - 1;
+
+      if (needsSummarization) {
+        logger.debug('Triggering async summarization', { sessionId });
+        // Don't await - let it run in background
+        this.summarizeOldContext(sessionId, chronologicalTurns, oldestRecentTurn).catch(err => {
+          logger.error('Background summarization failed', { sessionId, error: err.message });
+        });
+      }
+
+      // Return cached summary + recent turns (or just recent if no summary yet)
+      if (session?.contextSummary) {
+        return `Previous conversation summary:\n${session.contextSummary}\n\nRecent conversation:\n${recentContext}`;
+      }
+
+      return recentContext;
     } catch (error) {
       logger.error('Failed to get conversation context', {
         sessionId,
@@ -322,6 +378,82 @@ export class ConversationSessionManager {
         error: (error as Error).message
       });
       return null;
+    }
+  }
+
+  /**
+   * Summarize old conversation turns (async background task)
+   */
+  private async summarizeOldContext(
+    sessionId: string,
+    allTurns: Array<{ turnNumber: number; userQuery: string; assistantResponse: string }>,
+    oldestRecentTurn: number
+  ): Promise<void> {
+    try {
+      // Get turns to summarize (all except recent ones)
+      const turnsToSummarize = allTurns.filter(turn => turn.turnNumber < oldestRecentTurn);
+
+      if (turnsToSummarize.length === 0) {
+        logger.debug('No old turns to summarize', { sessionId });
+        return;
+      }
+
+      // Format turns for summarization
+      const conversationText = turnsToSummarize
+        .map(turn => `User: ${turn.userQuery}\nAssistant: ${turn.assistantResponse}`)
+        .join('\n\n');
+
+      // Simple summarization prompt
+      const systemPrompt = `You are a conversation summarizer. Create a concise summary of the conversation below.
+
+Focus on:
+- User's goals and intent
+- Key decisions or actions taken
+- Important context or constraints
+- Specific details mentioned (names, dates, etc.)
+
+Keep the summary under 300 tokens.`;
+
+      logger.info('Summarizing old conversation turns', {
+        sessionId,
+        turnCount: turnsToSummarize.length,
+        textLength: conversationText.length
+      });
+
+      // Call LLM for summarization
+      const startTime = Date.now();
+      const summary = await llmService.execute({
+        systemPrompt,
+        userPrompt: conversationText,
+        taskType: LLMTaskType.FAST, // Use fast model (gpt-4.1-nano)
+        requiresJSON: false
+      });
+
+      const duration = Date.now() - startTime;
+
+      // Store summary in database
+      await prisma.voiceSession.update({
+        where: { id: sessionId },
+        data: {
+          contextSummary: summary.content.trim(),
+          lastSummarizedTurn: turnsToSummarize[turnsToSummarize.length - 1].turnNumber
+        }
+      });
+
+      logger.info('Conversation summary created', {
+        sessionId,
+        summaryLength: summary.content.length,
+        summarizedTurns: turnsToSummarize.length,
+        lastTurn: turnsToSummarize[turnsToSummarize.length - 1].turnNumber,
+        duration
+      });
+    } catch (error) {
+      logger.error('Failed to summarize conversation', {
+        sessionId,
+        error: (error as Error).message,
+        stack: (error as Error).stack
+      });
+      // Don't throw - this is a background task
     }
   }
 
