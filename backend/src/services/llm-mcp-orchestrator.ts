@@ -44,6 +44,7 @@ export interface SelectedTool {
   tool: string;
   params: Record<string, unknown>;
   reasoning?: string;
+  iterateOver?: string; // e.g., "{{results[0].data.events}}" - execute once per item
 }
 
 export interface ExecutionPlan {
@@ -90,6 +91,50 @@ export class LLMMCPOrchestrator {
   }
 
   /**
+   * Resolve template references in parameters
+   * Supports: {{results[0].data.events}}, {{results[0].data.events[0].id}}, etc.
+   */
+  private resolveParams(
+    params: Record<string, unknown>,
+    results: ExecutionResult[]
+  ): Record<string, unknown> {
+    const resolved: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === 'string' && value.includes('{{')) {
+        // Extract template pattern
+        const match = value.match(/\{\{results\[(\d+)\]\.(.+?)\}\}/);
+        if (match) {
+          const resultIndex = parseInt(match[1]);
+          const path = match[2];
+
+          if (resultIndex < results.length) {
+            // Navigate the path (e.g., "data.events[0].id")
+            const pathParts = path.split(/\.|\[|\]/).filter(Boolean);
+            let resolvedValue: unknown = results[resultIndex];
+
+            for (const part of pathParts) {
+              if (resolvedValue && typeof resolvedValue === 'object') {
+                resolvedValue = (resolvedValue as Record<string, unknown>)[part];
+              }
+            }
+
+            resolved[key] = resolvedValue;
+          } else {
+            resolved[key] = value; // Keep original if index out of bounds
+          }
+        } else {
+          resolved[key] = value;
+        }
+      } else {
+        resolved[key] = value;
+      }
+    }
+
+    return resolved;
+  }
+
+  /**
    * Main entry point: Process user query with LLM-driven orchestration
    */
   async processQuery(
@@ -106,16 +151,16 @@ export class LLMMCPOrchestrator {
 
     const emitProgress = (update: ProgressUpdate) => {
       progressUpdates.push(update);
-      logger.debug('Orchestrator: emitProgress called', {
+      logger.info('Orchestrator: emitProgress called', {
         update,
         hasCallback: !!options?.onProgress,
         streaming: options?.streaming
-      }); // DEBUG
+      });
       if (options?.onProgress) {
-        logger.debug('Orchestrator: Calling onProgress callback'); // DEBUG
+        logger.info('Orchestrator: Calling onProgress callback');
         options.onProgress(update);
       } else {
-        logger.warn('Orchestrator: No onProgress callback available'); // DEBUG
+        logger.warn('Orchestrator: No onProgress callback available');
       }
     };
 
@@ -231,13 +276,163 @@ export class LLMMCPOrchestrator {
         plan: executionPlan.executionPlan
       });
 
-      // Step 4: Execute Command Chain
+      // Step 4: Execute Command Chain with result references
       const results: ExecutionResult[] = [];
-      let previousResult: ExecutionResult | null = null;
 
       for (let i = 0; i < executionPlan.selectedTools.length; i++) {
         const selectedTool = executionPlan.selectedTools[i];
 
+        // Check if this tool needs to iterate over previous results
+        if (selectedTool.iterateOver) {
+          // Resolve the iteration array from previous results
+          const iterationPath = selectedTool.iterateOver.match(/\{\{results\[(\d+)\]\.(.+?)\}\}/);
+          if (!iterationPath) {
+            logger.error('Invalid iterateOver path', { iterateOver: selectedTool.iterateOver });
+            continue;
+          }
+
+          const resultIndex = parseInt(iterationPath[1]);
+          const path = iterationPath[2];
+
+          if (resultIndex >= results.length) {
+            logger.error('Result index out of bounds for iteration', { resultIndex, resultsLength: results.length });
+            continue;
+          }
+
+          // Get the array to iterate over
+          const pathParts = path.split(/\.|\[|\]/).filter(Boolean);
+          let iterationArray: unknown = results[resultIndex];
+
+          for (const part of pathParts) {
+            if (iterationArray && typeof iterationArray === 'object') {
+              iterationArray = (iterationArray as Record<string, unknown>)[part];
+            }
+          }
+
+          if (!Array.isArray(iterationArray)) {
+            results.push({
+              success: false,
+              service: selectedTool.service,
+              tool: selectedTool.tool,
+              error: 'Iteration target is not an array',
+              executionTime: 0
+            });
+            break;
+          }
+
+          if (iterationArray.length === 0) {
+            results.push({
+              success: false,
+              service: selectedTool.service,
+              tool: selectedTool.tool,
+              error: 'No items to iterate over',
+              executionTime: 0
+            });
+            emitProgress({
+              type: 'error',
+              message: `✗ No items found to process`,
+              timestamp: Date.now()
+            });
+            break;
+          }
+
+          // Execute tool for each item in the array
+          const iterationResults: ExecutionResult[] = [];
+          let successCount = 0;
+
+          for (let itemIndex = 0; itemIndex < iterationArray.length; itemIndex++) {
+            const item = iterationArray[itemIndex];
+
+            // Resolve params with current item context
+            // IMPORTANT: Preserve LLM-provided params, merge with item data
+            const baseParams = { ...selectedTool.params }; // LLM's intended params
+            const itemData = typeof item === 'object' && item !== null ? item as Record<string, unknown> : {};
+
+            const resolvedParams = this.resolveParams(
+              { ...baseParams, _currentItem: item },
+              results
+            );
+
+            // Replace _currentItem refs with actual item fields
+            for (const [key, value] of Object.entries(resolvedParams)) {
+              if (typeof value === 'string' && value.includes('_currentItem')) {
+                const fieldMatch = value.match(/_currentItem\.(.+)/);
+                if (fieldMatch) {
+                  resolvedParams[key] = itemData[fieldMatch[1]];
+                }
+              } else if (key === '_currentItem') {
+                delete resolvedParams[key];
+              }
+            }
+
+            // Merge item data, but DON'T overwrite LLM's explicit params
+            // This ensures: eventId from item, startTime from LLM params
+            Object.assign(resolvedParams, {
+              ...itemData,      // Item data (eventId, summary, etc.)
+              ...baseParams     // LLM params override (startTime, endTime, etc.)
+            });
+
+            // Map common field names for Google Calendar compatibility
+            // list_events returns "id", but update_event/delete_event expect "eventId"
+            if ('id' in itemData && !('eventId' in resolvedParams)) {
+              resolvedParams.eventId = itemData.id;
+            }
+
+            emitProgress({
+              type: 'executing',
+              message: `Executing: ${selectedTool.tool} (${itemIndex + 1}/${iterationArray.length})`,
+              timestamp: Date.now(),
+              data: { service: selectedTool.service, tool: selectedTool.tool, item }
+            });
+
+            const itemResult = await this.executeTool(userId, {
+              ...selectedTool,
+              params: resolvedParams
+            });
+
+            iterationResults.push(itemResult);
+
+            if (itemResult.success) {
+              successCount++;
+              emitProgress({
+                type: 'executing',
+                message: `✓ ${selectedTool.tool} (${successCount}/${iterationArray.length})`,
+                timestamp: Date.now()
+              });
+            }
+          }
+
+          // Aggregate iteration results
+          const aggregatedResult: ExecutionResult = {
+            success: successCount > 0,
+            service: selectedTool.service,
+            tool: selectedTool.tool,
+            data: {
+              iterationCount: iterationArray.length,
+              successCount,
+              results: iterationResults
+            },
+            executionTime: iterationResults.reduce((sum, r) => sum + r.executionTime, 0),
+            error: successCount === 0 ? 'All iteration executions failed' : undefined
+          };
+
+          results.push(aggregatedResult);
+
+          emitProgress({
+            type: 'completed',
+            message: `✓ ${selectedTool.tool}: ${successCount}/${iterationArray.length} succeeded`,
+            timestamp: Date.now(),
+            data: aggregatedResult.data
+          });
+
+          if (successCount === 0) {
+            break; // Stop chain if all iterations failed
+          }
+
+          continue;
+        }
+
+        // Normal execution (no iteration)
         emitProgress({
           type: 'executing',
           message: `Executing: ${selectedTool.tool} (${i + 1}/${executionPlan.selectedTools.length})`,
@@ -245,88 +440,59 @@ export class LLMMCPOrchestrator {
           data: { service: selectedTool.service, tool: selectedTool.tool }
         });
 
-        // 🔧 SPECIAL CASE: list_events followed by delete_event
-        // If previous tool was list_events and current tool is delete_event,
-        // automatically delete all events from the list
-        if (
-          previousResult?.success &&
-          selectedTool.tool === 'delete_event' &&
-          i > 0 &&
-          executionPlan.selectedTools[i - 1].tool === 'list_events'
-        ) {
-          const eventsData = previousResult.data as { events?: Array<{ id: string; summary: string }> };
-          const events = eventsData?.events || [];
+        // Resolve parameter references
+        const resolvedParams = this.resolveParams(selectedTool.params, results);
 
-          if (events.length === 0) {
-            results.push({
-              success: false,
-              service: selectedTool.service,
-              tool: selectedTool.tool,
-              data: null,
-              executionTime: 0,
-              error: 'No events found to delete'
-            });
-            emitProgress({
-              type: 'error',
-              message: '✗ No events found to delete',
-              timestamp: Date.now()
-            });
-            break;
-          }
+        const result = await this.executeTool(userId, {
+          ...selectedTool,
+          params: resolvedParams
+        });
 
-          // Delete each event
-          let deletedCount = 0;
-          const deleteResults = [];
+        // Smart retry if list/search returned 0 results and context exists
+        if (result.success &&
+            (selectedTool.tool.includes('list') || selectedTool.tool.includes('search')) &&
+            conversationContext &&
+            result.data &&
+            typeof result.data === 'object' &&
+            'count' in result.data &&
+            (result.data.count as number) === 0) {
 
-          for (const event of events) {
-            try {
-              const deleteResult = await this.executeTool(userId, {
-                ...selectedTool,
-                params: { eventId: event.id }
-              });
-
-              deleteResults.push(deleteResult);
-
-              if (deleteResult.success) {
-                deletedCount++;
-                emitProgress({
-                  type: 'executing',
-                  message: `✓ Deleted: ${event.summary} (${deletedCount}/${events.length})`,
-                  timestamp: Date.now()
-                });
-              }
-            } catch (error) {
-              logger.error('Failed to delete event', { eventId: event.id, error: (error as Error).message });
-            }
-          }
-
-          // Aggregate result
-          const aggregatedResult: ExecutionResult = {
-            success: deletedCount > 0,
+          logger.warn('Search returned 0 results, attempting context-aware retry', {
+            userId,
             service: selectedTool.service,
             tool: selectedTool.tool,
-            data: { deletedCount, totalEvents: events.length, results: deleteResults },
-            executionTime: deleteResults.reduce((sum, r) => sum + r.executionTime, 0),
-            error: deletedCount === 0 ? 'Failed to delete any events' : undefined
-          };
-
-          results.push(aggregatedResult);
-          previousResult = aggregatedResult;
-
-          emitProgress({
-            type: 'completed',
-            message: `✓ Deleted ${deletedCount} of ${events.length} events`,
-            timestamp: Date.now(),
-            data: aggregatedResult.data
+            originalParams: resolvedParams
           });
 
-          continue; // Skip normal execution
+          // Retry with broader time range
+          const retryResult = await this.smartRetrySearch(
+            userId,
+            selectedTool,
+            resolvedParams,
+            conversationContext
+          );
+
+          if (retryResult && retryResult.success && retryResult.data &&
+              typeof retryResult.data === 'object' &&
+              'count' in retryResult.data &&
+              (retryResult.data.count as number) > 0) {
+            logger.info('Smart retry found results', {
+              count: retryResult.data.count,
+              originalParams: resolvedParams
+            });
+            results.push(retryResult);
+
+            emitProgress({
+              type: 'completed',
+              message: `✓ ${selectedTool.tool} completed (with context retry)`,
+              timestamp: Date.now(),
+              data: retryResult.data
+            });
+            continue;
+          }
         }
 
-        // Normal execution
-        const result = await this.executeTool(userId, selectedTool);
         results.push(result);
-        previousResult = result;
 
         if (result.success) {
           emitProgress({
@@ -470,10 +636,8 @@ export class LLMMCPOrchestrator {
           continue;
         }
 
-        // Map provider to service name
-        const serviceName = provider === 'google'
-          ? 'google_calendar'
-          : provider;
+        // Use provider as service name directly (LLM will learn the available services)
+        const serviceName = provider;
 
         // Convert MCPTool format to LLM-friendly format
         toolRegistry[serviceName] = toolsFromMCP.map(tool => {
@@ -533,6 +697,60 @@ export class LLMMCPOrchestrator {
   }
 
   /**
+   * Smart retry for failed searches - broadens search based on conversation context
+   */
+  private async smartRetrySearch(
+    userId: string,
+    originalTool: SelectedTool,
+    originalParams: Record<string, unknown>,
+    conversationContext: string
+  ): Promise<ExecutionResult | null> {
+    try {
+      // Extract mentions of events/meetings from recent context
+      const contextLines = conversationContext.split('\n');
+      const recentAssistantResponses = contextLines
+        .filter(line => line.startsWith('Assistant:'))
+        .slice(-3);
+
+      // Check if assistant recently created/mentioned an event
+      const mentionedEvent = recentAssistantResponses.some(line =>
+        /created|scheduled|added|meeting|event/i.test(line)
+      );
+
+      if (!mentionedEvent) {
+        logger.debug('No recent event mentions in context, skipping retry');
+        return null;
+      }
+
+      // Broaden search - remove restrictive time filters or expand them
+      const broadenedParams: Record<string, unknown> = { ...originalParams };
+
+      // If timeMin/timeMax exist, expand to next 7 days
+      if ('timeMin' in broadenedParams || 'timeMax' in broadenedParams) {
+        broadenedParams.timeMin = 'today';
+        broadenedParams.timeMax = 'in 7 days';
+        logger.info('Broadening time range for retry', {
+          original: { timeMin: originalParams.timeMin, timeMax: originalParams.timeMax },
+          broadened: { timeMin: broadenedParams.timeMin, timeMax: broadenedParams.timeMax }
+        });
+      }
+
+      // Execute broadened search
+      return await this.executeTool(userId, {
+        ...originalTool,
+        params: broadenedParams
+      });
+    } catch (error) {
+      logger.error('Smart retry failed', {
+        error: (error as Error).message,
+        userId,
+        tool: originalTool.tool
+      });
+      return null;
+    }
+  }
+
+  /**
    * Use LLM to select tools and build execution plan
    */
   private async selectTools(
@@ -546,7 +764,10 @@ export class LLMMCPOrchestrator {
     logger.info('Sending tool selection request to LLM', {
       query,
       availableServices: Object.keys(toolRegistry),
-      totalTools: Object.values(toolRegistry).reduce((sum, tools) => sum + tools.length, 0)
+      totalTools: Object.values(toolRegistry).reduce((sum, tools) => sum + tools.length, 0),
+      hasContext: !!conversationContext,
+      contextLength: conversationContext?.length || 0,
+      contextPreview: conversationContext?.substring(0, 150) || 'none'
     });
 
     try {
@@ -607,32 +828,75 @@ export class LLMMCPOrchestrator {
       prompt += `\n\n**Previous Conversation Context:**
 ${conversationContext}
 
-Use this context to understand follow-up questions like "yes", "no", "tell me more", "the first one", "add them", etc.
-The current query may reference information from previous turns.`;
+**CRITICAL CONTEXT RULES (READ CAREFULLY):**
+1. **Referential Understanding**: When user says "the meeting", "that event", "it", "the one", they refer to items from the conversation above
+2. **Temporal Relativity**: Time words in the current query are RELATIVE TO NOW, not to when items were created
+   - User says "the meeting for today" → They might mean "the meeting I just asked you to create" (check context!)
+   - User says "update it to 5PM" → Find what "it" refers to in previous turns
+3. **Context-First Search Strategy**: To modify/delete items mentioned in previous turns:
+   - FIRST: Extract identifying details from conversation history (summary, attendees, time mentioned in creation)
+   - THEN: Search using those context details, NOT literal interpretation of current query
+   - Example: Previous turn created "meeting for tomorrow at 3pm"
+     → Current query "the meeting you created for today should be 5pm"
+     → WRONG: Search today's meetings (finds nothing)
+     → RIGHT: Search for meeting created in previous turn (use summary/time from context)
+4. **Action Attribution**: "you created", "you scheduled", "you added" → Search for items from my most recent actions
+5. **Pronouns & References**: "it", "that one", "the first one", "yes/no" → Resolve using conversation history
+
+**EXAMPLE - Correct Context Usage:**
+Context shows:
+  User: "Create meeting for tomorrow at 3pm"
+  Assistant: "Created meeting 'empty meeting' for tomorrow at 3pm"
+
+Current query: "Update the meeting you created for today to 5pm"
+
+WRONG Interpretation ❌:
+  Tool: list_events, params: { timeMin: "today 00:00", timeMax: "today 23:59" }
+  Reason: Literal reading of "today" - ignores context
+
+RIGHT Interpretation ✅:
+  Tool: list_events, params: { timeMin: "tomorrow 00:00", timeMax: "tomorrow 23:59", summary: "empty meeting" }
+  OR: list_events, params: { timeMin: "today", timeMax: "next week" }  // Broader search
+  Reason: Uses context to understand "the meeting you created" refers to the meeting from previous turn
+
+Use this context to understand ALL references, pronouns, and follow-ups.`;
     }
 
     prompt += `\n\nAvailable MCP Tools:
 ${toolsJSON}
 
 Rules:
-- Only use tools that are explicitly available in the tool registry
+- **CRITICAL**: Only use services and tools that are explicitly available in the tool registry above
+- The "service" field in your response MUST exactly match a service name from the registry
 - Extract all parameters from user query (use natural language for times like "tomorrow 3pm")
-- If the query is ambiguous or missing critical information, set needsClarification=true
+- **needsClarification**: ONLY set to true if ABSOLUTELY NECESSARY missing information that CANNOT be inferred from context
+  * DO NOT ask for clarification when context provides the answer
+  * DO NOT ask for clarification when you can search/list to find items
+  * Example: User says "update the meeting" with context showing a meeting → DON'T clarify, just search and update
+  * Example: User says "update it" with NO context about what "it" is → DO clarify
 - Return confidence score (0-1) based on how well you understand the request
-- For chained commands (e.g., "create event AND send slack message"), include multiple tools in selectedTools array
-- **CRITICAL**: For DELETE/UPDATE operations, you MUST include BOTH list AND delete/update tools:
-  * Example: "delete tomorrow's meetings" requires: [list_events, delete_event]
-  * Example: "cancel my 3pm meeting" requires: [list_events, delete_event]
-  * First tool identifies the target items, second tool performs the action
-  * Do NOT just list items without performing the requested action
+- For chained commands, include multiple tools in selectedTools array
+- **BULK OPERATIONS**: For delete/update multiple items, use the iteration pattern:
+  * Step 1: Use a list/query tool to find the target items
+  * Step 2: Use delete/update tool with "iterateOver" field pointing to the array from Step 1
+  * The "iterateOver" field enables automatic iteration over array results
+- **Parameter References**: Use {{results[INDEX].data.FIELD}} to reference previous results
+  * Example: {{results[0].data.events}} references the events array from the first tool
+- **DO NOT** hardcode service names - always use what's in the registry
+- **USE CONTEXT**: When context mentions items, actions, or details → use that information to build tool calls
 
 Output Format (MUST be valid JSON):
+
+IMPORTANT NOTES:
+- "service" field MUST exactly match the provider names from the Available MCP Tools list above
+- Do NOT invent service names - only use services that are explicitly listed
+- Tool names MUST match exactly what's available in the tool registry for that service
 
 Example 1 - Simple create operation:
 {
   "selectedTools": [
     {
-      "service": "google_calendar",
+      "service": "google",
       "tool": "create_event",
       "params": {
         "summary": "Meeting with John",
@@ -647,11 +911,11 @@ Example 1 - Simple create operation:
   "clarificationQuestion": null
 }
 
-Example 2 - DELETE operation (REQUIRES list + delete):
+Example 2 - BULK DELETE operation (with iteration):
 {
   "selectedTools": [
     {
-      "service": "google_calendar",
+      "service": "google",
       "tool": "list_events",
       "params": {
         "timeMin": "tomorrow at 00:00",
@@ -660,16 +924,79 @@ Example 2 - DELETE operation (REQUIRES list + delete):
       "reasoning": "First, find all meetings scheduled for tomorrow"
     },
     {
-      "service": "google_calendar",
+      "service": "google",
       "tool": "delete_event",
-      "params": {
-        "eventId": "{{RESULT_FROM_PREVIOUS_TOOL}}"
-      },
-      "reasoning": "Then delete each event found in the list"
+      "params": {},  // Empty params OK - eventId comes from iteration
+      "iterateOver": "{{results[0].data.events}}",
+      "reasoning": "Delete each event found in the list"
     }
   ],
-  "executionPlan": "List tomorrow's events, then delete all of them",
+  "executionPlan": "List tomorrow's events, then delete each one",
   "confidence": 0.9,
+  "needsClarification": false,
+  "clarificationQuestion": null
+}
+
+Example 2b - BULK UPDATE operation (params + iteration):
+{
+  "selectedTools": [
+    {
+      "service": "google",
+      "tool": "list_events",
+      "params": {
+        "timeMin": "today",
+        "timeMax": "next week"
+      },
+      "reasoning": "Find the meeting to update"
+    },
+    {
+      "service": "google",
+      "tool": "update_event",
+      "params": {
+        "startTime": "tomorrow 5pm",  // NEW time to set
+        "endTime": "tomorrow 6pm"      // NEW end time
+      },
+      "iterateOver": "{{results[0].data.events}}",
+      "reasoning": "Update each event to new time (eventId comes from iteration, new times from params)"
+    }
+  ],
+  "executionPlan": "Find meetings, update their time to tomorrow 5pm",
+  "confidence": 0.9,
+  "needsClarification": false,
+  "clarificationQuestion": null
+}
+
+Example 3 - COMPLEX MULTI-STEP (list, delete, then send Slack DMs):
+{
+  "selectedTools": [
+    {
+      "service": "google",
+      "tool": "list_events",
+      "params": {
+        "timeMin": "tomorrow 3pm",
+        "timeMax": "tomorrow 4pm"
+      },
+      "reasoning": "Find meetings between 3-4 PM tomorrow"
+    },
+    {
+      "service": "google",
+      "tool": "delete_event",
+      "params": {},
+      "iterateOver": "{{results[0].data.events}}",
+      "reasoning": "Delete each meeting found"
+    },
+    {
+      "service": "slack",
+      "tool": "send_direct_message",
+      "params": {
+        "message": "I had to reschedule our meeting tomorrow due to a PM meeting. Sorry for the inconvenience!"
+      },
+      "iterateOver": "{{results[0].data.events}}",
+      "reasoning": "Send DM to each participant's email"
+    }
+  ],
+  "executionPlan": "List meetings, delete them, then notify participants via Slack",
+  "confidence": 0.85,
   "needsClarification": false,
   "clarificationQuestion": null
 }
@@ -684,58 +1011,57 @@ IMPORTANT:
   }
 
   /**
-   * Quick intent classification - determines if query requires tools or is conversational
+   * LLM Router: Single fast classification - conversational vs action
+   * Based on 2025 best practices for agentic workflows
    */
   private async quickIntentCheck(query: string, conversationContext?: string): Promise<boolean> {
-    // Fast pattern matching for common conversational queries
-    const conversationalPatterns = [
-      /^(hi|hello|hey|greetings|good morning|good afternoon|good evening)/i,
-      /^(how are you|what's up|sup)/i,
-      /^(thanks|thank you|thx)/i,
-      /^(bye|goodbye|see you|cya)/i,
-      /^(yes|no|okay|ok|sure|alright)/i,
-      /^(tell me more|explain|what|why|how)/i
-    ];
+    const systemPrompt = `You are a fast intent router for a voice assistant. Classify the user's query into ONE of two categories:
 
-    // Check if query matches conversational patterns
-    const isConversational = conversationalPatterns.some(pattern => pattern.test(query.trim()));
+1. **CONVERSATIONAL**: Greetings, thanks, questions about capabilities, casual chat, acknowledgments
+2. **ACTION**: Any request to DO something - create, update, delete, search, send, schedule, cancel, etc.
 
-    if (isConversational && !conversationContext) {
-      // Simple greeting/chat without context - no tools needed
-      return false;
+${conversationContext ? `\n**Previous Conversation:**\n${conversationContext}\n` : ''}
+
+**Classification Rules:**
+- "Hello", "Hi", "Hey", "Good morning" → CONVERSATIONAL
+- "Thanks", "Thank you" → CONVERSATIONAL
+- "How are you?", "What can you do?" → CONVERSATIONAL
+- "Yes", "Yeah", "Sure", "Do it" (confirming an action) → ACTION
+- "You didn't do it", "That's wrong" (complaint about incomplete action) → ACTION
+- ANY request with action verbs (create, update, find, schedule, etc.) → ACTION
+- Follow-ups to incomplete actions → ACTION
+
+**Current Query:** "${query}"
+
+Respond with JSON only: { "type": "conversational" | "action", "confidence": 0.0-1.0, "reasoning": "brief explanation" }`;
+
+    try {
+      const response = await llmService.execute({
+        systemPrompt,
+        userPrompt: query,
+        taskType: LLMTaskType.FAST, // Use fast model (gpt-4.1-nano)
+        requiresJSON: true
+      });
+
+      const result = JSON.parse(response.content);
+      const requiresTools = result.type === 'action';
+
+      logger.info('🔀 Intent Router Decision', {
+        query,
+        classification: result.type,
+        requiresTools,
+        confidence: result.confidence,
+        reasoning: result.reasoning
+      });
+
+      return requiresTools;
+
+    } catch (error) {
+      logger.error('Intent routing failed, defaulting to ACTION', {
+        error: (error as Error).message
+      });
+      return true; // Default to action (safe fallback)
     }
-
-    // For follow-ups with context, use LLM to check if tools are needed
-    if (conversationContext) {
-      const systemPrompt = `You are an intent classifier. Determine if the user query requires using external tools (calendar, email, etc.) or is just conversational.
-
-Previous conversation:
-${conversationContext}
-
-Current query: "${query}"
-
-Respond with JSON: { "requiresTools": true/false, "reasoning": "..." }`;
-
-      try {
-        const response = await llmService.execute({
-          systemPrompt,
-          userPrompt: query,
-          taskType: LLMTaskType.FAST,
-          requiresJSON: true
-        });
-
-        const result = JSON.parse(response.content);
-        logger.debug('Intent classification result', { query, requiresTools: result.requiresTools, reasoning: result.reasoning });
-
-        return result.requiresTools;
-      } catch (error) {
-        logger.error('Intent classification failed, defaulting to requiring tools', { error: (error as Error).message });
-        return true; // Default to requiring tools if classification fails
-      }
-    }
-
-    // Default: query requires tools
-    return true;
   }
 
   /**
@@ -748,15 +1074,8 @@ Respond with JSON: { "requiresTools": true/false, "reasoning": "..." }`;
     const startTime = Date.now();
 
     try {
-      // Map service name to provider for lookup
-      const providerMap: Record<string, string> = {
-        'google_calendar': 'google',
-        'slack': 'slack',
-        'github': 'github',
-        'notion': 'notion'
-      };
-
-      const provider = providerMap[selectedTool.service] || selectedTool.service;
+      // Use service name as provider directly (no hardcoded mapping)
+      const provider = selectedTool.service;
 
       // Check if MCP is connected
       if (!mcpConnectionManagerV2.isConnected(userId, provider)) {
@@ -771,19 +1090,21 @@ Respond with JSON: { "requiresTools": true/false, "reasoning": "..." }`;
         selectedTool.params
       );
 
-      logger.info('Tool executed successfully', {
-        userId,
-        service: selectedTool.service,
-        tool: selectedTool.tool,
-        provider,
-        executionTime: Date.now() - startTime
-      });
-
       // 🔧 FIX: Unwrap MCP result if it has nested {success, data} structure
       // Most MCPs return {success: true, data: {...}} - we want just the inner data
       const unwrappedData = (result && typeof result === 'object' && 'data' in result && 'success' in result)
         ? (result as { success: boolean; data: unknown }).data
         : result;
+
+      logger.info('Tool executed successfully', {
+        userId,
+        service: selectedTool.service,
+        tool: selectedTool.tool,
+        params: selectedTool.params,
+        resultDataPreview: JSON.stringify(unwrappedData).substring(0, 500),
+        provider,
+        executionTime: Date.now() - startTime
+      });
 
       return {
         success: true,
@@ -798,7 +1119,9 @@ Respond with JSON: { "requiresTools": true/false, "reasoning": "..." }`;
         userId,
         service: selectedTool.service,
         tool: selectedTool.tool,
-        error: (error as Error).message
+        params: selectedTool.params,
+        error: (error as Error).message,
+        stack: (error as Error).stack
       });
 
       return {

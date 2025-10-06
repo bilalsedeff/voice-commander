@@ -198,7 +198,12 @@ export class ConversationSessionManager {
 
       // If context is small enough, return as-is
       if (tokenCount <= this.MAX_CONTEXT_TOKENS) {
-        logger.debug('Context within token limit', { sessionId, tokens: tokenCount });
+        logger.debug('Context within token limit', {
+          sessionId,
+          tokens: tokenCount,
+          turnCount: chronologicalTurns.length,
+          contextPreview: fullContext.substring(0, 200).replace(/\n/g, ' ')
+        });
         return fullContext;
       }
 

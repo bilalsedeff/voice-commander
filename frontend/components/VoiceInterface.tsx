@@ -254,8 +254,30 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
             setIsSpeaking(true);
             speechAPI.speak(`Error: ${errorMsg}`, {
               lang: 'en-US',
-              onEnd: () => setIsSpeaking(false),
-              onError: () => setIsSpeaking(false),
+              onEnd: () => {
+                setIsSpeaking(false);
+                // Resume listening after error in continuous mode
+                if (mode === 'continuous' && !isPausedByUser) {
+                  console.log('🎤 Resuming continuous listening after SSE error TTS...');
+                  setTimeout(() => {
+                    if (!isProcessing && !isPausedByUser) {
+                      startListening();
+                    }
+                  }, 500);
+                }
+              },
+              onError: () => {
+                setIsSpeaking(false);
+                // Resume listening even if error TTS fails
+                if (mode === 'continuous' && !isPausedByUser) {
+                  console.log('🎤 Resuming continuous listening after SSE error TTS failure...');
+                  setTimeout(() => {
+                    if (!isProcessing && !isPausedByUser) {
+                      startListening();
+                    }
+                  }, 500);
+                }
+              },
             }).catch(() => setIsSpeaking(false)); // Silently fail
           }
         },
@@ -291,16 +313,46 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
                   clearTimeout(ttsTimeout);
                   setIsSpeaking(false);
                   console.log('✅ TTS finished successfully');
+
+                  // Resume listening in continuous mode
+                  if (mode === 'continuous' && !isPausedByUser) {
+                    console.log('🎤 Resuming continuous listening after TTS...');
+                    setTimeout(() => {
+                      if (!isProcessing && !isPausedByUser) {
+                        startListening();
+                      }
+                    }, 500);
+                  }
                 },
                 onError: (err) => {
                   clearTimeout(ttsTimeout);
                   setIsSpeaking(false);
                   console.debug('TTS unavailable:', err);
+
+                  // Resume listening even on TTS error
+                  if (mode === 'continuous' && !isPausedByUser) {
+                    console.log('🎤 Resuming continuous listening after TTS error...');
+                    setTimeout(() => {
+                      if (!isProcessing && !isPausedByUser) {
+                        startListening();
+                      }
+                    }, 500);
+                  }
                 },
               }).catch(err => {
                 clearTimeout(ttsTimeout);
                 setIsSpeaking(false);
                 console.debug('TTS skipped:', err.message);
+
+                // Resume listening even if TTS fails
+                if (mode === 'continuous' && !isPausedByUser) {
+                  console.log('🎤 Resuming continuous listening after TTS skip...');
+                  setTimeout(() => {
+                    if (!isProcessing && !isPausedByUser) {
+                      startListening();
+                    }
+                  }, 500);
+                }
               });
             } catch (ttsError) {
               setIsSpeaking(false);
@@ -322,8 +374,30 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
         setIsSpeaking(true);
         await speechAPI.speak(`Error: ${errorMsg}`, {
           lang: 'en-US',
-          onEnd: () => setIsSpeaking(false),
-          onError: () => setIsSpeaking(false),
+          onEnd: () => {
+            setIsSpeaking(false);
+            // Resume listening after error in continuous mode
+            if (mode === 'continuous' && !isPausedByUser) {
+              console.log('🎤 Resuming continuous listening after error TTS...');
+              setTimeout(() => {
+                if (!isProcessing && !isPausedByUser) {
+                  startListening();
+                }
+              }, 500);
+            }
+          },
+          onError: () => {
+            setIsSpeaking(false);
+            // Resume listening even if error TTS fails
+            if (mode === 'continuous' && !isPausedByUser) {
+              console.log('🎤 Resuming continuous listening after error TTS failure...');
+              setTimeout(() => {
+                if (!isProcessing && !isPausedByUser) {
+                  startListening();
+                }
+              }, 500);
+            }
+          },
         }).catch(console.error);
       }
     }

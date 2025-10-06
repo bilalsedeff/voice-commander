@@ -87,6 +87,7 @@ ${conversationContext ? `\nPrevious conversation:\n${conversationContext}` : ''}
 
       logger.info('Natural TTS response generated', {
         query: originalQuery,
+        response: naturalResponse,
         responseLength: naturalResponse.length,
         cost: response.cost
       });

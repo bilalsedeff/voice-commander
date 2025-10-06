@@ -34,6 +34,12 @@ interface MCPEndpointConfig {
   transport: 'stdio' | 'http-sse';
 }
 
+interface MCPConnectionResult {
+  success: boolean;
+  error?: string;
+  toolsCount?: number;
+}
+
 // MCP Endpoint Configuration
 const MCP_ENDPOINTS: Record<string, MCPEndpointConfig> = {
   google: {
@@ -65,9 +71,7 @@ export class MCPConnectionManagerV2 {
   async connectMCPServer(
     userId: string,
     provider: string
-  ): Promise<{
-    [x: string]: any; success: boolean; error?: string 
-}> {
+  ): Promise<MCPConnectionResult> {
     const connectionKey = `${userId}:${provider}`;
 
     try {
@@ -159,7 +163,10 @@ export class MCPConnectionManagerV2 {
         toolsCount: tools.length
       });
 
-      return { success: true };
+      return {
+        success: true,
+        toolsCount: tools.length
+      };
     } catch (error) {
       logger.error('MCP connection failed', {
         userId,

@@ -321,19 +321,50 @@ export class GoogleCalendarMCP {
     };
 
     if (summary) updatedEvent.summary = summary as string;
-    if (startTime) {
-      const startDate = this.parseDateTime(startTime as string);
-      updatedEvent.start = {
-        dateTime: startDate.toISOString(),
-        timeZone: 'UTC'
-      };
-    }
-    if (endTime) {
-      const endDate = this.parseDateTime(endTime as string);
-      updatedEvent.end = {
-        dateTime: endDate.toISOString(),
-        timeZone: 'UTC'
-      };
+
+    // Handle time updates intelligently
+    if (startTime || endTime) {
+      // Calculate original duration (in milliseconds)
+      const originalStart = existingEvent.data.start?.dateTime
+        ? new Date(existingEvent.data.start.dateTime)
+        : null;
+      const originalEnd = existingEvent.data.end?.dateTime
+        ? new Date(existingEvent.data.end.dateTime)
+        : null;
+
+      const originalDuration = (originalStart && originalEnd)
+        ? originalEnd.getTime() - originalStart.getTime()
+        : 3600000; // Default: 1 hour if can't calculate
+
+      if (startTime) {
+        const startDate = this.parseDateTime(startTime as string);
+        updatedEvent.start = {
+          dateTime: startDate.toISOString(),
+          timeZone: 'UTC'
+        };
+
+        // If endTime not provided, preserve original duration
+        if (!endTime) {
+          const endDate = new Date(startDate.getTime() + originalDuration);
+          updatedEvent.end = {
+            dateTime: endDate.toISOString(),
+            timeZone: 'UTC'
+          };
+          logger.info('Auto-calculated endTime to preserve duration', {
+            startTime: startDate.toISOString(),
+            endTime: endDate.toISOString(),
+            durationMs: originalDuration
+          });
+        }
+      }
+
+      if (endTime) {
+        const endDate = this.parseDateTime(endTime as string);
+        updatedEvent.end = {
+          dateTime: endDate.toISOString(),
+          timeZone: 'UTC'
+        };
+      }
     }
 
     const result = await calendar.events.update({
