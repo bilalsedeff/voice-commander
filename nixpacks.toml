@@ -1,11 +1,11 @@
-[phases.setup]
-nixPkgs = ["nodejs_20", "openssl"]
+[options]
+pkgs = ["nodejs_20", "openssl"]
 
 [phases.install]
-cmds = ["cd backend && npm ci --legacy-peer-deps"]
+cmds = ["npm ci --legacy-peer-deps"]
 
 [phases.build]
-cmds = ["cd backend && npx prisma generate && npm run build"]
+cmds = ["npx prisma generate", "npm run build"]
 
 [start]
-cmd = "cd backend && npx prisma migrate deploy && node dist/index.js"
+cmd = "npx prisma migrate deploy && node dist/index.js"
