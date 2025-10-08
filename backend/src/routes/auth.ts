@@ -412,11 +412,13 @@ router.get(
       });
 
       // Set tokens in httpOnly cookies
+      const cookieDomain = process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined;
+
       res.cookie('accessToken', result.tokens.accessToken, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', // lax for OAuth redirects
-        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
+        domain: cookieDomain,
         maxAge: result.tokens.expiresIn
       });
 
@@ -424,8 +426,15 @@ router.get(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', // lax for OAuth redirects
-        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
+        domain: cookieDomain,
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
+      logger.info('Cookies set', {
+        domain: cookieDomain,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        nodeEnv: process.env.NODE_ENV
       });
 
       // Redirect to frontend (tokens are now in cookies)
