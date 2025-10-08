@@ -1,6 +1,6 @@
 'use client';
 
-import { Calendar, MessageSquare, FileText, Github, CheckCircle, XCircle, Loader2, RefreshCw, AlertCircle, Clock } from 'lucide-react';
+import { Calendar, MessageSquare, FileText, Github, Users, CheckCircle, XCircle, Loader2, RefreshCw, AlertCircle, Clock } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { oauth } from '@/lib/api';
 
@@ -9,7 +9,7 @@ interface ServiceCardProps {
     id: string;
     name: string;
     description: string;
-    icon: 'calendar' | 'slack' | 'notion' | 'github';
+    icon: 'calendar' | 'slack' | 'notion' | 'github' | 'contacts';
     connected: boolean;
     color: string;
     mcpConnected?: boolean;
@@ -27,11 +27,13 @@ const iconMap = {
   slack: MessageSquare,
   notion: FileText,
   github: Github,
+  contacts: Users,
 };
 
 // Map frontend service IDs to backend provider names
 const serviceToProviderMap: Record<string, string> = {
   'google_calendar': 'google',
+  'google_contacts': 'google-contacts',
   'slack': 'slack',
   'notion': 'notion',
   'github': 'github',

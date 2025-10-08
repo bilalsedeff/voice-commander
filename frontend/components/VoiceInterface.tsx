@@ -403,17 +403,40 @@ export default function VoiceInterface({ onCommandExecuted }: VoiceInterfaceProp
     }
   }, [speechAPI, sessionId, error, onCommandExecuted]);
 
-  // VAD Integration for Continuous Mode
-  // TODO: Re-enable when Whisper backend endpoint is ready (POST /api/voice/transcribe)
+  /**
+   * VAD (Voice Activity Detection) - Optional Enhancement
+   *
+   * Status: OPTIONAL - Basic voice recognition already works via Web Speech API
+   *
+   * Purpose: VAD would provide more precise voice activity detection than Web Speech API,
+   * enabling better "hands-free" continuous listening with automatic start/stop.
+   *
+   * Implementation Path (for future enhancement):
+   * 1. Backend: Create POST /api/voice/transcribe endpoint
+   * 2. Backend: Integrate Whisper (npm i @whisper/node or use OpenAI Whisper API)
+   * 3. Frontend: Enable VAD below and implement onSpeechEnd handler
+   * 4. Frontend: Add voice.transcribeAudio() function in lib/api.ts
+   *
+   * Benefits:
+   * - More accurate speech boundary detection
+   * - Better noise filtering than browser STT
+   * - Offline capability (if using local Whisper)
+   * - Lower latency for continuous mode
+   *
+   * Note: Current Web Speech API implementation is production-ready and works well.
+   * This VAD integration is a future enhancement, not a requirement.
+   */
   const { isListening: vadIsListening, isSpeaking: vadIsSpeaking } = useVAD({
-    enabled: false, // Temporarily disabled - waiting for Whisper transcription backend
+    enabled: false, // Disabled - using Web Speech API (production-ready)
     onSpeechEnd: async (audioBlob) => {
       console.log('🎤 VAD: Speech detected, converting to text...');
-      // TODO: Send audioBlob to backend Whisper API for transcription
+      // Implementation when backend Whisper endpoint is ready:
       // const formData = new FormData();
       // formData.append('audio', audioBlob);
       // const transcript = await voice.transcribeAudio(formData);
-      // await processVoiceCommand(transcript);
+      // if (transcript) {
+      //   await processVoiceCommand(transcript);
+      // }
     },
     onVADError: (error) => {
       console.error('VAD Error:', error);

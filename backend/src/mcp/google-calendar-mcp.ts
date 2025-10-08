@@ -47,8 +47,12 @@ export class GoogleCalendarMCP {
             description: 'Event description (optional)'
           },
           attendees: {
-            type: 'string',
-            description: 'Comma-separated list of attendee emails (optional)'
+            type: 'array',
+            description: 'List of attendee email addresses to invite (optional)',
+            items: {
+              type: 'string',
+              description: 'Email address of attendee (e.g., "user@gmail.com")'
+            }
           },
           location: {
             type: 'string',
@@ -82,7 +86,7 @@ export class GoogleCalendarMCP {
     },
     {
       name: 'update_event',
-      description: 'Update an existing calendar event',
+      description: 'Update an existing calendar event (time, title, attendees, etc.)',
       inputSchema: {
         type: 'object',
         properties: {
@@ -101,6 +105,22 @@ export class GoogleCalendarMCP {
           endTime: {
             type: 'string',
             description: 'New end time (optional)'
+          },
+          attendees: {
+            type: 'array',
+            description: 'List of attendee email addresses to invite (optional). Replaces all existing attendees.',
+            items: {
+              type: 'string',
+              description: 'Email address of attendee (e.g., "user@gmail.com")'
+            }
+          },
+          addAttendees: {
+            type: 'array',
+            description: 'Add these attendees WITHOUT removing existing ones (optional)',
+            items: {
+              type: 'string',
+              description: 'Email address of attendee to add (e.g., "user@gmail.com")'
+            }
           }
         },
         required: ['eventId']
@@ -210,11 +230,17 @@ export class GoogleCalendarMCP {
       ? this.parseDateTime(endTime as string)
       : new Date(startDate.getTime() + 3600000); // Default 1 hour
 
-    // Parse attendees
+    // Parse attendees (support both array and comma-separated string for backwards compatibility)
     const attendeeList = attendees
-      ? (attendees as string).split(',').map(email => ({
-          email: email.trim()
-        }))
+      ? (Array.isArray(attendees)
+          ? (attendees as string[]).map(email => ({
+              email: email.trim(),
+              responseStatus: 'needsAction'
+            }))
+          : (attendees as string).split(',').map(email => ({
+              email: email.trim(),
+              responseStatus: 'needsAction'
+            })))
       : [];
 
     const event = {
@@ -234,7 +260,8 @@ export class GoogleCalendarMCP {
 
     const result = await calendar.events.insert({
       calendarId: 'primary',
-      requestBody: event
+      requestBody: event,
+      sendUpdates: attendeeList.length > 0 ? 'all' : 'none' // Send email to attendees if any
     });
 
     logger.info('Calendar event created successfully', {
@@ -308,7 +335,7 @@ export class GoogleCalendarMCP {
     calendar: Calendar,
     args: Record<string, unknown>
   ): Promise<MCPToolCallResult> {
-    const { eventId, summary, startTime, endTime } = args;
+    const { eventId, summary, startTime, endTime, attendees, addAttendees } = args;
 
     // Get existing event
     const existingEvent = await calendar.events.get({
@@ -367,10 +394,37 @@ export class GoogleCalendarMCP {
       }
     }
 
+    // Handle attendees updates
+    if (attendees && Array.isArray(attendees)) {
+      // Replace all attendees
+      updatedEvent.attendees = (attendees as string[]).map(email => ({
+        email: email.trim(),
+        responseStatus: 'needsAction'
+      }));
+      logger.info('Replacing attendees', {
+        count: updatedEvent.attendees.length,
+        emails: attendees
+      });
+    } else if (addAttendees && Array.isArray(addAttendees)) {
+      // Add to existing attendees
+      const existing = existingEvent.data.attendees || [];
+      const newAttendees = (addAttendees as string[]).map(email => ({
+        email: email.trim(),
+        responseStatus: 'needsAction'
+      }));
+      updatedEvent.attendees = [...existing, ...newAttendees];
+      logger.info('Adding attendees to existing list', {
+        existingCount: existing.length,
+        newCount: newAttendees.length,
+        totalCount: updatedEvent.attendees.length
+      });
+    }
+
     const result = await calendar.events.update({
       calendarId: 'primary',
       eventId: eventId as string,
-      requestBody: updatedEvent
+      requestBody: updatedEvent,
+      sendUpdates: 'all' // Send email notifications to attendees
     });
 
     logger.info('Calendar event updated', { eventId });

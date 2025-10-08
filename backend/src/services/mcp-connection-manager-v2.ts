@@ -11,13 +11,14 @@
 
 import { PrismaClient } from '@prisma/client';
 import { GoogleCalendarMCP } from '../mcp/google-calendar-mcp';
+import { GoogleContactsMCP } from '../mcp/google-contacts-mcp';
 import { MCPHttpClient } from './mcp-http-client';
 import { decryptToken } from '../utils/encryption';
 import logger from '../utils/logger';
 
 const prisma = new PrismaClient();
 
-type MCPInstance = GoogleCalendarMCP | MCPHttpClient;
+type MCPInstance = GoogleCalendarMCP | GoogleContactsMCP | MCPHttpClient;
 
 interface MCPConnectionInfo {
   provider: string;
@@ -45,6 +46,11 @@ const MCP_ENDPOINTS: Record<string, MCPEndpointConfig> = {
   google: {
     provider: 'google',
     endpoint: 'local', // Local GoogleCalendarMCP class
+    transport: 'stdio'
+  },
+  'google-contacts': {
+    provider: 'google-contacts',
+    endpoint: 'local', // Local GoogleContactsMCP class
     transport: 'stdio'
   },
   slack: {
@@ -122,6 +128,9 @@ export class MCPConnectionManagerV2 {
           case 'google':
             mcpInstance = new GoogleCalendarMCP();
             break;
+          case 'google-contacts':
+            mcpInstance = new GoogleContactsMCP();
+            break;
           default:
             throw new Error(`Stdio MCP not available for provider: ${provider}`);
         }
@@ -191,10 +200,14 @@ export class MCPConnectionManagerV2 {
 
   /**
    * Get OAuth access token for provider
+   * Maps google-contacts to google for OAuth token lookup
    */
   private async getAccessToken(userId: string, provider: string): Promise<string> {
+    // Map google-contacts to google for OAuth token lookup (they share same OAuth)
+    const oauthProvider = provider === 'google-contacts' ? 'google' : provider;
+
     const oauthToken = await prisma.oAuthToken.findFirst({
-      where: { userId, provider }
+      where: { userId, provider: oauthProvider }
     });
 
     if (!oauthToken) {

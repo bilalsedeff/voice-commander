@@ -1,0 +1,102 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Deploy Backend to Railway
+  deploy-backend:
+    name: Deploy Backend (Railway)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        working-directory: ./backend
+        run: railway up --service backend
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+      - name: Run Database Migrations
+        working-directory: ./backend
+        run: railway run npx prisma migrate deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+  # Job 2: Deploy Frontend to Vercel
+  deploy-frontend:
+    name: Deploy Frontend (Vercel)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Pull Vercel Environment
+        working-directory: ./frontend
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build Frontend
+        working-directory: ./frontend
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel
+        working-directory: ./frontend
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  # Job 3: Health Check
+  health-check:
+    name: Production Health Check
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    steps:
+      - name: Wait for deployment to stabilize
+        run: sleep 30
+
+      - name: Check Backend Health
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.BACKEND_URL }}/health)
+          if [ $response -ne 200 ]; then
+            echo "❌ Backend health check failed (HTTP $response)"
+            exit 1
+          fi
+          echo "✅ Backend health check passed"
+
+      - name: Check Frontend Health
+        run: |
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://voicecommander.org)
+          if [ $response -ne 200 ]; then
+            echo "❌ Frontend health check failed (HTTP $response)"
+            exit 1
+          fi
+          echo "✅ Frontend health check passed"
+
+      - name: Notify Deployment Success
+        if: success()
+        run: |
+          echo "🚀 Deployment successful!"
+          echo "Backend: ${{ secrets.BACKEND_URL }}"
+          echo "Frontend: https://voicecommander.org"

@@ -10,6 +10,7 @@ import { auth, oauth } from '@/lib/api';
 // Map backend provider names to frontend service IDs
 const providerToServiceMap: Record<string, string> = {
   'google': 'google_calendar',
+  'google-contacts': 'google_contacts',
   'slack': 'slack',
   'notion': 'notion',
   'github': 'github',
@@ -26,6 +27,18 @@ function DashboardContent() {
       icon: 'calendar' as const,
       connected: false,
       color: 'bg-blue-500',
+      mcpConnected: false,
+      mcpStatus: 'disconnected',
+      mcpToolsCount: 0,
+      mcpError: null as string | null,
+    },
+    {
+      id: 'google_contacts',
+      name: 'Google Contacts',
+      description: 'Search and manage your contacts',
+      icon: 'contacts' as const,
+      connected: false,
+      color: 'bg-green-500',
       mcpConnected: false,
       mcpStatus: 'disconnected',
       mcpToolsCount: 0,
@@ -97,7 +110,11 @@ function DashboardContent() {
 
         // Update services with connection status (OAuth + MCP)
         setServices(prev => prev.map(service => {
-          const provider = service.id === 'google_calendar' ? 'google' : service.id;
+          // Map frontend service IDs to backend provider names
+          let provider = service.id;
+          if (service.id === 'google_calendar') provider = 'google';
+          if (service.id === 'google_contacts') provider = 'google-contacts';
+
           const connection = connections.find(c => c.provider === provider);
           return {
             ...service,
@@ -120,7 +137,11 @@ function DashboardContent() {
             // Refresh connection status to show updated MCP info
             const updatedConnections = await oauth.getConnections();
             setServices(prev => prev.map(service => {
-              const provider = service.id === 'google_calendar' ? 'google' : service.id;
+              // Map frontend service IDs to backend provider names
+              let provider = service.id;
+              if (service.id === 'google_calendar') provider = 'google';
+              if (service.id === 'google_contacts') provider = 'google-contacts';
+
               const connection = updatedConnections.find(c => c.provider === provider);
               return connection ? {
                 ...service,
@@ -175,7 +196,11 @@ function DashboardContent() {
         try {
           const connections = await oauth.getConnections();
           setServices(prev => prev.map(service => {
-            const providerName = service.id === 'google_calendar' ? 'google' : service.id;
+            // Map frontend service IDs to backend provider names
+            let providerName = service.id;
+            if (service.id === 'google_calendar') providerName = 'google';
+            if (service.id === 'google_contacts') providerName = 'google-contacts';
+
             const connection = connections.find(c => c.provider === providerName);
             return connection ? {
               ...service,
@@ -234,7 +259,11 @@ function DashboardContent() {
       setServices(prev => prev.map(service => {
         if (service.id !== serviceId) return service;
 
-        const provider = service.id === 'google_calendar' ? 'google' : service.id;
+        // Map frontend service IDs to backend provider names
+        let provider = service.id;
+        if (service.id === 'google_calendar') provider = 'google';
+        if (service.id === 'google_contacts') provider = 'google-contacts';
+
         const connection = connections.find(c => c.provider === provider);
 
         return connection ? {
