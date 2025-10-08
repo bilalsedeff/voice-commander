@@ -109,7 +109,7 @@ VAD-ERROR-FIXES.md
 VAD-LEGACY-MODEL-FIX.md
 DEPLOYMENT_GUIDE_TR.md
 generate-keys.ps1
-
+cloudflare-dns-fix.md
 voice-commander-web-mvp.md
 
 # Package lock files (if using yarn, npm, or pnpm, only one lock file should be present)
