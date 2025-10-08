@@ -44,6 +44,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 // MIDDLEWARE
 // ============================================================================
 
+// Trust proxy (Railway, Cloudflare, etc.)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: {
