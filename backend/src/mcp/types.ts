@@ -3,16 +3,23 @@
  * Based on Model Context Protocol specification
  */
 
+// JSON Schema property type (supports arrays)
+export interface JSONSchemaProperty {
+  type: string;
+  description?: string;
+  enum?: string[];
+  items?: {
+    type: string;
+    description?: string;
+  };
+}
+
 export interface MCPTool {
   name: string;
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, {
-      type: string;
-      description?: string;
-      enum?: string[];
-    }>;
+    properties: Record<string, JSONSchemaProperty>;
     required?: string[];
   };
 }
