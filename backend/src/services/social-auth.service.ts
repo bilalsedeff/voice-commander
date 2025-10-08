@@ -148,6 +148,8 @@ export async function getSocialAuthUrl(provider: string): Promise<string> {
     provider,
     state,
     redirectUri: config.redirectUri,
+    clientId: config.clientId,
+    fullUrl: authUrl,
   });
 
   return authUrl;
