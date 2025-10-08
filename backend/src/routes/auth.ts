@@ -67,6 +67,7 @@ router.post(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
+        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
         maxAge: result.tokens.expiresIn
       });
 
@@ -74,6 +75,7 @@ router.post(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
+        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
@@ -151,6 +153,7 @@ router.post(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
+        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
         maxAge: result.tokens.expiresIn
       });
 
@@ -158,6 +161,7 @@ router.post(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict',
+        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
@@ -412,6 +416,7 @@ router.get(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', // lax for OAuth redirects
+        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
         maxAge: result.tokens.expiresIn
       });
 
@@ -419,6 +424,7 @@ router.get(
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax', // lax for OAuth redirects
+        domain: process.env.NODE_ENV === 'production' ? '.voicecommander.org' : undefined,
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
       });
 
