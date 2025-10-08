@@ -22,7 +22,7 @@ const IV_LENGTH = 16; // AES block size
 
 /**
  * Get encryption key from environment variable
- * Must be 32 characters (256 bits) for AES-256
+ * Supports both raw 32-char strings and Base64-encoded 32-byte keys
  */
 function getEncryptionKey(): Buffer {
   const key = process.env.ENCRYPTION_KEY;
@@ -31,8 +31,21 @@ function getEncryptionKey(): Buffer {
     throw new Error('ENCRYPTION_KEY environment variable is required');
   }
 
+  // If key is Base64 encoded (contains =, +, / or is 44 chars), decode it
+  if (key.includes('=') || key.includes('+') || key.includes('/') || key.length === 44) {
+    try {
+      const decoded = Buffer.from(key, 'base64');
+      if (decoded.length === 32) {
+        return decoded;
+      }
+    } catch {
+      // Fall through to length check
+    }
+  }
+
+  // Otherwise, expect raw 32-character string
   if (key.length !== 32) {
-    throw new Error('ENCRYPTION_KEY must be exactly 32 characters for AES-256');
+    throw new Error('ENCRYPTION_KEY must be exactly 32 characters or Base64-encoded 32 bytes for AES-256');
   }
 
   return Buffer.from(key, 'utf-8');
