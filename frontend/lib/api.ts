@@ -202,6 +202,28 @@ export const oauth = {
     const data: OAuthConnectionsResponse = await response.json();
     return data.connections;
   },
+
+  /**
+   * Force refresh MCP connection for a provider
+   * Attempts to connect/reconnect MCP server and fetch tool list
+   */
+  async refreshConnection(provider: string): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+    connection?: OAuthConnection;
+  }> {
+    const response = await authenticatedFetch(`/api/oauth/refresh/${provider}`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Refresh failed');
+    }
+
+    return response.json();
+  },
 };
 
 /**

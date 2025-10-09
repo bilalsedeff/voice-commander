@@ -252,31 +252,61 @@ function DashboardContent() {
 
   const handleServiceRefresh = async (serviceId: string) => {
     try {
-      // Fetch latest connection status from backend
-      const connections = await oauth.getConnections();
+      // Map frontend service IDs to backend provider names
+      let provider = serviceId;
+      if (serviceId === 'google_calendar') provider = 'google';
+      if (serviceId === 'google_contacts') provider = 'google-contacts';
 
-      // Update only the refreshed service
-      setServices(prev => prev.map(service => {
-        if (service.id !== serviceId) return service;
+      // Force refresh MCP connection (will attempt to connect if not connected)
+      const refreshResult = await oauth.refreshConnection(provider);
 
-        // Map frontend service IDs to backend provider names
-        let provider = service.id;
-        if (service.id === 'google_calendar') provider = 'google';
-        if (service.id === 'google_contacts') provider = 'google-contacts';
+      // Update the service with latest status
+      if (refreshResult.connection) {
+        setServices(prev => prev.map(service => {
+          if (service.id !== serviceId) return service;
 
-        const connection = connections.find(c => c.provider === provider);
+          return {
+            ...service,
+            connected: refreshResult.connection!.connected,
+            mcpConnected: refreshResult.connection!.mcpConnected || false,
+            mcpStatus: refreshResult.connection!.mcpStatus || 'disconnected',
+            mcpToolsCount: refreshResult.connection!.mcpToolsCount || 0,
+            mcpError: refreshResult.connection!.mcpError || null,
+          };
+        }));
+      }
 
-        return connection ? {
-          ...service,
-          connected: connection.connected,
-          mcpConnected: connection.mcpConnected || false,
-          mcpStatus: connection.mcpStatus || 'disconnected',
-          mcpToolsCount: connection.mcpToolsCount || 0,
-          mcpError: connection.mcpError || null,
-        } : service;
-      }));
+      // If refresh failed, still fetch latest status to show error
+      if (!refreshResult.success) {
+        console.warn('MCP refresh failed:', refreshResult.error);
+      }
     } catch (error) {
       console.error('Failed to refresh service status:', error);
+
+      // Fallback: fetch latest status from backend
+      try {
+        const connections = await oauth.getConnections();
+        setServices(prev => prev.map(service => {
+          if (service.id !== serviceId) return service;
+
+          let provider = service.id;
+          if (service.id === 'google_calendar') provider = 'google';
+          if (service.id === 'google_contacts') provider = 'google-contacts';
+
+          const connection = connections.find(c => c.provider === provider);
+
+          return connection ? {
+            ...service,
+            connected: connection.connected,
+            mcpConnected: connection.mcpConnected || false,
+            mcpStatus: connection.mcpStatus || 'disconnected',
+            mcpToolsCount: connection.mcpToolsCount || 0,
+            mcpError: connection.mcpError || null,
+          } : service;
+        }));
+      } catch (fallbackError) {
+        console.error('Fallback fetch also failed:', fallbackError);
+      }
     }
   };
 

@@ -317,4 +317,140 @@ router.get(
   }
 );
 
+/**
+ * POST /api/oauth/refresh/:provider
+ * Force refresh MCP connection for a provider
+ * Attempts to connect/reconnect MCP server and fetch tool list
+ * Requires authentication
+ */
+router.post(
+  '/refresh/:provider',
+  authenticateToken,
+  async (req: Request, res: Response): Promise<void> => {
+    const { provider } = req.params;
+
+    try {
+      // Validate provider
+      if (!SUPPORTED_PROVIDERS.includes(provider)) {
+        res.status(400).json({
+          error: 'Invalid provider',
+          message: `Provider must be one of: ${SUPPORTED_PROVIDERS.join(', ')}`
+        });
+        return;
+      }
+
+      if (!req.user?.userId) {
+        res.status(401).json({
+          error: 'Unauthorized',
+          message: 'User not authenticated'
+        });
+        return;
+      }
+
+      const userId = req.user.userId;
+
+      // Check if provider is connected (OAuth)
+      const serviceConnection = await prisma.serviceConnection.findUnique({
+        where: {
+          userId_provider: {
+            userId,
+            provider
+          }
+        }
+      });
+
+      if (!serviceConnection || !serviceConnection.connected) {
+        res.status(400).json({
+          error: 'Provider not connected',
+          message: `Please connect ${provider} first via OAuth`
+        });
+        return;
+      }
+
+      logger.info('Force refreshing MCP connection', {
+        userId,
+        provider
+      });
+
+      // Try to connect/reconnect MCP server
+      try {
+        await mcpConnectionManagerV2.connectMCPServer(userId, provider);
+
+        // Get updated connection status
+        const updatedConnection = await prisma.serviceConnection.findUnique({
+          where: {
+            userId_provider: {
+              userId,
+              provider
+            }
+          },
+          select: {
+            provider: true,
+            connected: true,
+            mcpConnected: true,
+            mcpStatus: true,
+            mcpToolsCount: true,
+            mcpError: true,
+            mcpLastHealthCheck: true,
+            updatedAt: true
+          }
+        });
+
+        res.status(200).json({
+          success: true,
+          message: `${provider} MCP connection refreshed`,
+          connection: updatedConnection
+        });
+
+      } catch (mcpError) {
+        // MCP connection failed, but return the error details
+        logger.error('MCP refresh failed', {
+          userId,
+          provider,
+          error: (mcpError as Error).message
+        });
+
+        // Get current connection status (with error)
+        const connectionWithError = await prisma.serviceConnection.findUnique({
+          where: {
+            userId_provider: {
+              userId,
+              provider
+            }
+          },
+          select: {
+            provider: true,
+            connected: true,
+            mcpConnected: true,
+            mcpStatus: true,
+            mcpToolsCount: true,
+            mcpError: true,
+            mcpLastHealthCheck: true,
+            updatedAt: true
+          }
+        });
+
+        res.status(200).json({
+          success: false,
+          message: 'MCP connection failed',
+          error: (mcpError as Error).message,
+          connection: connectionWithError
+        });
+      }
+
+    } catch (error) {
+      logger.error('OAuth refresh failed', {
+        provider: req.params.provider,
+        userId: req.user?.userId,
+        error: (error as Error).message
+      });
+
+      res.status(500).json({
+        error: 'Refresh failed',
+        message: (error as Error).message
+      });
+    }
+  }
+);
+
 export default router;
