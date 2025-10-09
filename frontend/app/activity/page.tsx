@@ -478,19 +478,19 @@ export default function ActivityPage() {
                                         </div>
 
                                         {/* Tool Params */}
-                                        {Object.keys(tool.params).length > 0 && (
+                                        {Object.keys(tool.params || {}).length > 0 && (
                                           <details className="mt-2">
                                             <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-900">
                                               Parameters
                                             </summary>
                                             <pre className="mt-1 text-xs bg-gray-50 p-2 rounded border border-gray-200 overflow-x-auto">
-                                              {JSON.stringify(tool.params, null, 2)}
+                                              {JSON.stringify(tool.params || {}, null, 2)}
                                             </pre>
                                           </details>
                                         )}
 
                                         {/* Tool Result */}
-                                        {tool.result && (
+                                        {tool.result != null && (
                                           <details className="mt-2">
                                             <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-900">
                                               Result
