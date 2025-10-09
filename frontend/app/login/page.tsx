@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Mic, Eye, EyeOff } from 'lucide-react';
 import { auth } from '@/lib/api';
 
+// Disable static generation
+export const dynamic = 'force-dynamic';
+
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -24,7 +25,7 @@ export default function LoginPage() {
       await auth.login(email, password);
 
       // Redirect to dashboard on success
-      router.push('/dashboard');
+      window.location.href = '/dashboard';
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Login failed';
       setError(errorMessage);

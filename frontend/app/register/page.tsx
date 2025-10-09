@@ -2,12 +2,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Mic, Eye, EyeOff, Check } from 'lucide-react';
 import { auth } from '@/lib/api';
 
+// Disable static generation
+export const dynamic = 'force-dynamic';
+
 export default function RegisterPage() {
-  const router = useRouter();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -65,7 +66,7 @@ export default function RegisterPage() {
       await auth.register(formData.email, formData.password, formData.name);
 
       // Redirect to dashboard on success
-      router.push('/dashboard');
+      window.location.href = '/dashboard';
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Registration failed';
       setError(errorMessage);

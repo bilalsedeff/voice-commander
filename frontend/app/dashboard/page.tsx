@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Mic, Settings, Info, CheckCircle, XCircle, User, LogOut, ChevronDown, Loader2 } from 'lucide-react';
+import { Mic, Settings, Info, CheckCircle, XCircle, User, LogOut, ChevronDown, Loader2, Activity } from 'lucide-react';
 import VoiceInterface from '@/components/VoiceInterface';
 import ServiceCard from '@/components/ServiceCard';
 import { auth, oauth } from '@/lib/api';
@@ -343,8 +343,15 @@ function DashboardContent() {
                       <p className="text-sm text-gray-600 truncate">{userEmail}</p>
                     </div>
                     <button
+                      onClick={() => window.location.href = '/activity'}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      <Activity className="w-4 h-4" />
+                      <span>Activity History</span>
+                    </button>
+                    <button
                       onClick={handleLogout}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors border-t border-gray-100"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Logout</span>
@@ -494,6 +501,26 @@ function DashboardContent() {
                 onRefresh={handleServiceRefresh}
               />
             ))}
+          </div>
+
+          {/* Privacy Notice */}
+          <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm text-blue-900 font-medium mb-1">Your Privacy & Security</p>
+                <p className="text-xs text-blue-800">
+                  All OAuth tokens are encrypted with AES-256 and only used for commands you explicitly request.
+                  Your credentials are never shared with third parties. View full transparency in your{' '}
+                  <button
+                    onClick={() => window.location.href = '/activity'}
+                    className="underline font-medium hover:text-blue-900"
+                  >
+                    Activity History
+                  </button>.
+                </p>
+              </div>
+            </div>
           </div>
 
             {/* Info Section */}

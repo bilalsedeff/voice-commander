@@ -609,8 +609,80 @@ export const voice = {
   },
 };
 
+/**
+ * Activity History API
+ */
+export const activity = {
+  /**
+   * Get user activity history with pagination
+   */
+  async getHistory(options?: {
+    page?: number;
+    limit?: number;
+    startDate?: Date;
+    endDate?: Date;
+  }): Promise<{
+    success: boolean;
+    activities: Array<{
+      id: string;
+      timestamp: Date;
+      type: 'session' | 'command' | 'oauth_connect' | 'oauth_disconnect';
+      title: string;
+      description: string;
+      details?: Record<string, unknown>;
+      success?: boolean;
+      service?: string;
+    }>;
+    pagination: {
+      page: number;
+      limit: number;
+      totalCount: number;
+      totalPages: number;
+      hasMore: boolean;
+    };
+  }> {
+    const params = new URLSearchParams();
+    if (options?.page) params.append('page', options.page.toString());
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.startDate) params.append('startDate', options.startDate.toISOString());
+    if (options?.endDate) params.append('endDate', options.endDate.toISOString());
+
+    const response = await authenticatedFetch(`/api/activity?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch activity history');
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Get activity statistics for dashboard
+   */
+  async getStats(): Promise<{
+    success: boolean;
+    stats: {
+      totalSessions: number;
+      totalCommands: number;
+      successfulCommands: number;
+      successRate: string;
+      connectedServices: number;
+      period: string;
+    };
+  }> {
+    const response = await authenticatedFetch('/api/activity/stats');
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch activity stats');
+    }
+
+    return response.json();
+  },
+};
+
 export default {
   auth,
   oauth,
   voice,
+  activity,
 };

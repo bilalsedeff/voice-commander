@@ -145,6 +145,7 @@ app.get('/api', (_req: Request, res: Response) => {
       oauth: '/api/oauth',
       services: '/api/services',
       voice: '/api/voice',
+      activity: '/api/activity',
       health: '/health'
     }
   });
@@ -163,6 +164,10 @@ app.use('/api/oauth', oauthRoutes);
 // Voice command routes
 import voiceRoutes from './routes/voice';
 app.use('/api/voice', voiceRoutes);
+
+// Activity history routes
+import activityRoutes from './routes/activity';
+app.use('/api/activity', activityRoutes);
 
 // ============================================================================
 // ERROR HANDLING

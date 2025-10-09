@@ -56,7 +56,10 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(git rm:*)",
+      "Bash(ENCRYPTION_KEY=6ea0924fca5653b725f61cc703802aa3 npx tsx src/utils/encryption.ts)",
+      "Bash(ENCRYPTION_KEY=\"0yaHWf7JmiaG4m0DfPwPtlO9RDU/z9ra+jgxa7vToqY=\" npx tsx src/utils/encryption.ts)"
     ],
     "deny": [],
     "ask": []
